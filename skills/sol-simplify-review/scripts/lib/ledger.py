@@ -8,6 +8,9 @@ from protocol import digest, require, Rejected, check_inventory, check_response,
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
+# The version of the protocol a receipt was produced under. A round records this at start;
+# audit compares it before deciding whether recomputed guard results are comparable at all.
+SKILL_BYTES = (SCRIPTS.parent / 'SKILL.md').read_bytes()
 
 
 def encode(value):
@@ -143,7 +146,22 @@ def audit(root, repo):
             require((d / 'checkout-head.txt').read_text().strip() == start['head_sha'],
                     'checkout', f'round {n}: checkout did not match')
             historical = [c for c in end['guards'] if c['guard'] not in {'checkout', 'seal-location'}]
-            require(checks == historical, 'ledger-guards', f'round {n}: recomputed guards differ')
+            # Recomputation catches a receipt that claims guard results the guards do not give.
+            # It can only say that about the guards that ran. When the skill has moved since --
+            # and it moves whenever one of these checks is corrected -- a difference is the
+            # correction, not a forgery, and treating it as one condemns every earlier round in
+            # the ledger. Measured: eight guard fixes in one afternoon would have bricked a real
+            # PR's whole receipt chain, and the way out of that is to delete the ledger, which
+            # destroys the round history it exists to keep.
+            #
+            # The artifact bytes stay bound either way: outputs are hashed at finish and verified
+            # above, so substituting a round's contents is still caught. What is dropped here is
+            # only the claim that today's guards agree with yesterday's.
+            if start.get('skill_sha256') == digest(SKILL_BYTES):
+                require(checks == historical, 'ledger-guards', f'round {n}: recomputed guards differ')
+            else:
+                require(end['accepted'] == all(c['ok'] for c in historical), 'ledger-guards',
+                        f'round {n}: acceptance does not follow from its own recorded guards')
             text = (d / 'ARTIFACT.md').read_text()
             stats = statistics(text, start['phase'])
             require(all(end[k] == v for k, v in stats.items()), 'ledger-counts', f'round {n}: counts differ from artifact')

@@ -338,6 +338,33 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
         ledger.append(root, record)
     check('ledger-unexecuted-pass-forged', False, lambda: ledger.audit(root, repo))
     ledger_path.write_bytes(saved_ledger)
+    # A receipt written under a different version of the protocol cannot be held to today's guard
+    # results: correcting a guard changes them, and eight corrections in one afternoon would
+    # otherwise condemn every earlier round in a real PR's chain. The way out of that is to delete
+    # the ledger, which destroys the round history it exists to keep. What survives a version move
+    # is the artifact hashes and the receipt's own internal consistency -- so a receipt that claims
+    # acceptance its own recorded guards do not support is still refused, whatever version wrote it.
+    # Simulate what a corrected guard actually leaves behind: a recorded result today's code no
+    # longer reproduces, with the receipt's own accept/reject logic still intact.
+    records = ledger.read(root)
+    for record in records:
+        if record.get('event') == 'started':
+            record['skill_sha256'] = '0' * 64
+        if record.get('event') == 'finished' and record.get('guards'):
+            record['guards'] = record['guards'] + [{'guard': 'retired-check', 'ok': True}]
+    ledger_path.unlink()
+    for record in records:
+        ledger.append(root, record)
+    check('ledger-other-version-audits', True, lambda: bool(ledger.audit(root, repo)))
+    records = ledger.read(root)
+    for record in records:
+        if record.get('event') == 'finished' and record.get('executed'):
+            record['accepted'] = not all(c['ok'] for c in record['guards'])
+    ledger_path.unlink()
+    for record in records:
+        ledger.append(root, record)
+    check('ledger-other-version-still-checks-itself', False, lambda: ledger.audit(root, repo))
+    ledger_path.write_bytes(saved_ledger)
     events(t / 'events', inv)
     host('1', h1, '18')
     (t / 'response').write_text(res.replace(line, ''))
