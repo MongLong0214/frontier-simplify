@@ -190,6 +190,14 @@ def main():
                         cmd += ['-m', os.environ['REVIEW_CODEX_MODEL']]
                     cmd += [prompt]
                 elif executor == 'claude':
+                    # The checkout is deliberately NOT trusted, and the warning saying so is the
+                    # property working. Its `.claude/settings.json` is a file from the tree under
+                    # review, so a change can add `permissions.allow` entries to its own settings
+                    # and a trusted checkout would hand them to the reviewer reviewing it. The path
+                    # is new every round exactly so no standing trust accumulates, and pressing the
+                    # dialog on the reviewer's behalf would grant a reviewed change the permissions
+                    # it wrote for itself. Reported by a consumer as a possible defect; recorded so
+                    # the next reader does not "fix" it.
                     cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose', prompt]
                 else:
                     raise Rejected('GUARD FAIL [executor] use codex, claude, or stub')
