@@ -10,7 +10,8 @@ import sys
 import tempfile
 
 from protocol import (Rejected, require, git, digest, fields, section, axes, verdict,
-                      check_response, escape_ids, hunks, hunk_markdown, blocks, check_extra_round)
+                      check_response, escape_ids, hunks, hunk_markdown, blocks, check_extra_round,
+                      protocol_sha256)
 import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -156,7 +157,7 @@ def main():
             require(rendered.returncode == 0, 'prompt', rendered.stderr.decode().strip())
             freeze(d / 'prompt.txt', rendered.stdout)
             inputs.append('prompt.txt')
-            start.update(inputs=ledger.hashes(d, inputs), skill_sha256=digest(SKILL.read_bytes()),
+            start.update(inputs=ledger.hashes(d, inputs), skill_sha256=protocol_sha256(SCRIPTS),
                          executor=a.executor or os.environ.get('REVIEW_EXECUTOR', 'codex'))
             ledger.append(root, start)
             started = True

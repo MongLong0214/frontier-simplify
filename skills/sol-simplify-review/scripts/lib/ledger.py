@@ -4,13 +4,12 @@ from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone
-from protocol import digest, require, Rejected, check_inventory, check_response, check_closure, axes, verdict, escape_ids, blocks, inv, protocol_escapes, check_extra_round
+from protocol import digest, protocol_sha256, require, Rejected, check_inventory, check_response, check_closure, axes, verdict, escape_ids, blocks, inv, protocol_escapes, check_extra_round
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
 # The version of the protocol a receipt was produced under. A round records this at start;
 # audit compares it before deciding whether recomputed guard results are comparable at all.
-SKILL_BYTES = (SCRIPTS.parent / 'SKILL.md').read_bytes()
 
 
 def encode(value):
@@ -157,7 +156,7 @@ def audit(root, repo):
             # The artifact bytes stay bound either way: outputs are hashed at finish and verified
             # above, so substituting a round's contents is still caught. What is dropped here is
             # only the claim that today's guards agree with yesterday's.
-            if start.get('skill_sha256') == digest(SKILL_BYTES):
+            if start.get('skill_sha256') == protocol_sha256(SCRIPTS):
                 require(checks == historical, 'ledger-guards', f'round {n}: recomputed guards differ')
             else:
                 require(end['accepted'] == all(c['ok'] for c in historical), 'ledger-guards',

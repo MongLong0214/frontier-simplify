@@ -11,6 +11,7 @@ import tempfile
 
 SCRIPTS = Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(SCRIPTS / 'lib'))
+import protocol
 from protocol import (Rejected, check_inventory, check_response, check_closure, escape_ids,
                       digest, hunks, hunk_markdown, blocks, check_extra_round)
 import ledger
@@ -355,6 +356,20 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     ledger_path.unlink()
     for record in records:
         ledger.append(root, record)
+    # The version a receipt records must cover the code that judged it. SKILL.md alone did not:
+    # eight guard corrections moved no byte of the prose, so every receipt still claimed the same
+    # version and audit read the corrections as forgeries. A fingerprint that misses the guards
+    # cannot tell an upgrade from tampering, which is the only question it is asked.
+    guard_file = SCRIPTS / 'lib/guards.sh'
+    original_guard = guard_file.read_bytes()
+    before = protocol.protocol_sha256(SCRIPTS)
+    try:
+        guard_file.write_bytes(original_guard + b'\n# a corrected guard\n')
+        check('protocol-version-covers-the-guards', True,
+              lambda: protocol.protocol_sha256(SCRIPTS) != before)
+    finally:
+        guard_file.write_bytes(original_guard)
+    check('protocol-version-restored', True, lambda: protocol.protocol_sha256(SCRIPTS) == before)
     check('ledger-other-version-audits', True, lambda: bool(ledger.audit(root, repo)))
     records = ledger.read(root)
     for record in records:

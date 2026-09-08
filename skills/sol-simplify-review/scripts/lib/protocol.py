@@ -28,6 +28,22 @@ def git(repo, *args):
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
+def protocol_sha256(scripts):
+    """Fingerprint of everything that decides a round's outcome.
+
+    SKILL.md alone is not the protocol. The guards live under scripts/, and a correction there
+    changes what a round is judged by while leaving the prose byte-identical -- measured: eight
+    guard fixes moved no SKILL.md byte, so every receipt still claimed the same version and audit
+    read the corrections as forgeries. A version that does not cover the code it versions cannot
+    tell an upgrade from tampering, which is the only question it is asked.
+    """
+    parts = [(scripts.parent / 'SKILL.md').read_bytes()]
+    for path in sorted(p for p in scripts.rglob('*')
+                       if p.is_file() and '__pycache__' not in p.parts):
+        parts.append(str(path.relative_to(scripts)).encode() + b'\0' + path.read_bytes())
+    return digest(b'\0'.join(parts))
+
+
 
 def fields(text):
     try:
