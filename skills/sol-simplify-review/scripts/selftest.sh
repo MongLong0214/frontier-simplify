@@ -267,6 +267,21 @@ mkinv "$T/inv-nosweep.md" "- a.txt — READ — changed
 - verification: COMPLETE
 - verdict: BLOCK"
 ck item-fail-without-sweep fail guard_item_fields "$T/inv-nosweep.md"
+# A defect in a comment has no runtime reproduction, and SKILL.md's template says so: it reads
+# `reproduction: <minimal reproduction, or not applicable>`. What a FAIL cannot be without is
+# evidence a reader can go and check.
+NOREPRO=$(printf '%s' "$BLOCKITEM" | sed 's|^- reproduction: .*$|- reproduction: not applicable|')
+mkinv "$T/inv-norepro.md" "- a.txt — READ — changed
+- b.txt — READ — changed" "$NOREPRO" "- enumeration: COMPLETE
+- verification: COMPLETE
+- verdict: BLOCK"
+ck item-fail-not-applicable-repro ok guard_item_fields "$T/inv-norepro.md"
+NOEVID=$(printf '%s' "$NOREPRO" | sed 's|^- evidence: .*$|- evidence: none|')
+mkinv "$T/inv-noevid.md" "- a.txt — READ — changed
+- b.txt — READ — changed" "$NOEVID" "- enumeration: COMPLETE
+- verification: COMPLETE
+- verdict: BLOCK"
+ck item-fail-without-evidence fail guard_item_fields "$T/inv-noevid.md"
 ck item-good               ok   guard_item_fields "$T/inv-full.md"
 ck item-blocker-good       ok   guard_item_fields "$T/inv-blockblock.md"
 

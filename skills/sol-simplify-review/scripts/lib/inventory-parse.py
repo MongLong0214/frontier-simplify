@@ -198,8 +198,13 @@ def check_items(text):
                 rc |= fail("[item] %s is FAIL with an empty class_sweep -- FAIL is not valid "
                            "when only the first failing site was examined; use UNVERIFIED"
                            % it["id"])
-            if empty(f.get("reproduction", "")):
-                rc |= fail("[item] %s is FAIL with no reproduction" % it["id"])
+            # SKILL.md's own template reads `reproduction: <minimal reproduction, or not
+            # applicable>`. Demanding one anyway put this guard at odds with its authority, and it
+            # fired on a correct item: a comment that contradicts the code beside it has no runtime
+            # reproduction, and "not applicable" is the honest answer. What a FAIL cannot be without
+            # is EVIDENCE -- something a reader can go and check.
+            if empty(f.get("evidence", "")):
+                rc |= fail("[item] %s is FAIL with no evidence" % it["id"])
     return rc
 
 
