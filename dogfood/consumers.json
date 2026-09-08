@@ -2,7 +2,15 @@
   "consumers": [
     {
       "repository": "/Users/isaac/projects/agent-operator-score",
-      "markers": ["agent-operator-score", "AOS"]
+      "markers": [
+        "agent-operator-score",
+        "AOS"
+      ]
+    },
+    {
+      "repository": "/Users/isaac/projects/sol-simplify",
+      "self": true,
+      "markers": []
     }
   ]
 }
