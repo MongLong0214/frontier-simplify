@@ -96,7 +96,13 @@ def render(found, min_rounds):
                    'consumer traced its recurrence to one function doing both adjudication and '
                    'cleanup, so a read path was a write path and a test observing it created the '
                    'condition it then asserted; the rule it had been re-applying per site was the '
-                   'symptom of that, and splitting the two leaves one site instead of a rule.\n')
+                   'symptom of that, and splitting the two leaves one site instead of a rule.\n'
+                   '\nWhen sweeping a class, count the project\'s own checking apparatus among its sites. '
+                   'Of four instances of one class seen across two projects in a day, two were in checks '
+                   'rather than in product: a census that read three hardcoded files while claiming a '
+                   'repository-wide PASS, and a coverage question answered in two places where only one '
+                   'had been corrected. Checking code is where a class survives longest, because nobody '
+                   'reviews the reviewer.\n')
         for i, (_, (verbatim, rounds)) in enumerate(sorted(standing.items(), key=lambda kv: -len(kv[1][1])), 1):
             out.append('P-%02d — %s\n      (%s)\n' % (i, verbatim, basis(verbatim, rounds)))
     if once:
