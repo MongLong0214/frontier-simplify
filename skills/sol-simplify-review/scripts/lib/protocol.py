@@ -71,12 +71,16 @@ def blocks(text, heading, level='###'):
 
 
 def axes(text):
-    return fields(section(text, 'Verdict'))
+    # Through `enumerated`, for the same reason the binding is: a reviewer writes
+    # `- enumeration: **COMPLETE.** Every file in CHANGED.txt was read ...` and the axis is the
+    # first word, not the sentence. This is the sibling site of that fix and it was left open --
+    # a class-local repair inside the harness whose own rule is to sweep the class.
+    return {k: inv.enumerated(v) for k, v in fields(section(text, 'Verdict')).items()}
 
 
 def verdict(text):
     v = section(text, 'Verdict')
-    named = fields(v).get('verdict')
+    named = inv.enumerated(fields(v).get('verdict') or '')
     if named:
         return named
     m = re.search(r'^(PASS WITH NITS|PASS|BLOCK|INCOMPLETE|RESTART_ROUND_1|PROTOCOL_ERROR)[ \t]*$', v, re.M)

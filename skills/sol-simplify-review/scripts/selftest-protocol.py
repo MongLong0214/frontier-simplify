@@ -202,6 +202,13 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     # the fault sat latent until a field that does was read through the same helper.
     check('binding-underscored-value-survives', True, lambda: ci(inv
         .replace('- basis: DIFF_ONLY', '- basis: **DIFF_ONLY**')))
+    # The sibling of the binding fix, left open when that one was made: the axes are written the
+    # same way a reviewer writes anything else -- the value in bold, then the reasoning on the same
+    # line. A complete inventory carrying three reproduced blockers was rejected for reporting
+    # neither axis while both were there.
+    check('axes-through-markup', True, lambda: ci(inv
+        .replace('- enumeration: COMPLETE', '- enumeration: **COMPLETE.** every changed file was read')
+        .replace('- verification: COMPLETE', '- verification: **COMPLETE.** nothing is UNVERIFIED')))
     check('enumeration-multiline-site-sweep', True, lambda: ci(inv.replace(
         '- class_sweep: searched both reader definitions and callers',
         '- class_sweep:\n  searched both reader definitions\n  and callers')))
