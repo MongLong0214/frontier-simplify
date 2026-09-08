@@ -17,6 +17,17 @@
 # prevent -- see guard_no_seal_in_tree in lib/guards.sh.
 set -euo pipefail
 
+# The harness always names its repository with `git -C`. Inherited GIT_DIR / GIT_WORK_TREE
+# override that, so a hook or CI job that exports them silently points these checks at a
+# different repository -- measured: a relative GIT_DIR=.git makes the seal/head cross-check
+# compare the wrong HEAD. It can fail a sound review; it can also pass a wrong one.
+# Every git call below names its repository with `git -C`; inherited GIT_DIR / GIT_WORK_TREE would
+# override that and seal a different repository. This process is started by the harness, so one
+# scrub at entry covers every call it makes.
+export -n GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR 2>/dev/null || true
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR \
+      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
+
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@" | awk '{print $1}'

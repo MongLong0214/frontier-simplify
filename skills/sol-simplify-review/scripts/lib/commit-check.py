@@ -36,6 +36,15 @@ def check(repo, trusted):
         candidate = staged / 'skills/sol-simplify-review/scripts'
         env = dict(os.environ, REVIEW_TEST_SCRIPTS=str(candidate), PYTHONDONTWRITEBYTECODE='1')
         env.pop('REVIEW_TEST_SKIP', None)
+        # Git exports GIT_DIR, GIT_INDEX_FILE and friends into every hook, and they follow any git
+        # command the hook starts -- including the ones the suite runs inside the throwaway
+        # repository it builds to measure itself. Measured: with GIT_DIR set, `git worktree add`
+        # in the fixture lands somewhere else and the seal/head cross-check fails, so the gate
+        # blocked a commit and named a guard that had nothing to do with the change. A gate that
+        # reports the wrong reason is worse than one that stays quiet.
+        for leaked in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX',
+                       'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'):
+            env.pop(leaked, None)
         config = trusted / 'consumers.json'
         if config.exists():
             env['REVIEW_CONSUMERS_CONFIG'] = str(config)

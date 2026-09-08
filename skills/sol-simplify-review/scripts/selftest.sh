@@ -5,6 +5,11 @@
 #
 # Builds its own throwaway repository, so it runs anywhere and depends on no project.
 set -uo pipefail
+# This suite builds its own repository and measures it. Inherited git environment points
+# those measurements at somebody else's repository, so it is dropped here too -- the hook
+# driver scrubs it as well, and a check this cheap belongs on both sides of that boundary.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR \
+      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_HERE="$HERE"
 HERE="${REVIEW_TEST_SCRIPTS:-$HERE}"
@@ -97,6 +102,22 @@ ck crosscheck-upstream-bad fail guard_seal_head_crosscheck "$T/s" "$T/rw" "$OTHE
 git -C "$T/rw" checkout --detach "$OTHER" >/dev/null 2>&1
 ck crosscheck-worktree-bad fail guard_seal_head_crosscheck "$T/s" "$T/rw" "$HEAD_SHA"
 git -C "$REPO" worktree remove --force "$T/rw" >/dev/null 2>&1
+
+# Git exports GIT_DIR into every hook. With an absolute value, `git -C <worktree> rev-parse HEAD`
+# answers for the EXPORTING repository instead of the worktree named -- measured. The dangerous
+# direction is not a false failure: point the leak at a repository whose HEAD equals the sealed
+# head, which is exactly the case when a repository reviews itself, and a genuine mismatch reads
+# as a match. The guard would then approve a tree it never looked at.
+env_leak_cannot_forge_a_match() {
+  git -C "$REPO" worktree add --detach "$T/leak" "$OTHER" >/dev/null 2>&1 || return 1
+  # Sealed head is HEAD_SHA, the tree is at OTHER: a real mismatch the guard must catch even
+  # though the leaked GIT_DIR's own HEAD is HEAD_SHA.
+  ( export GIT_DIR="$REPO/.git"
+    guard_seal_head_crosscheck "$T/s" "$T/leak" "$HEAD_SHA" ); r=$?
+  git -C "$REPO" worktree remove --force "$T/leak" >/dev/null 2>&1
+  [ "$r" -ne 0 ]
+}
+ck crosscheck-leak-cannot-forge-match ok env_leak_cannot_forge_a_match
 
 # --- the inventory as data ----------------------------------------------------------------
 mkinv() { # <file> <accounting-block> <items-block> <verdict-block>

@@ -6,6 +6,18 @@
 # self-declared statuses, or the implementer's response as proof"; "silence is not
 # coverage". Prose does not run. These do.
 
+# The harness always names its repository with `git -C`. Inherited GIT_DIR / GIT_WORK_TREE
+# override that, so a hook or CI job that exports them silently points these checks at a
+# different repository -- measured: a relative GIT_DIR=.git makes the seal/head cross-check
+# compare the wrong HEAD. It can fail a sound review; it can also pass a wrong one.
+# Every git call here names its repository with `git -C`. Inherited GIT_DIR / GIT_WORK_TREE
+# override that, so a hook or CI job that exports them silently points these checks at a different
+# repository -- measured: a relative GIT_DIR=.git makes the seal/head cross-check compare the wrong
+# HEAD. It can fail a sound review; it can also pass a wrong one. Scrubbed per call, not once at
+# load: whoever sources this file may export them afterwards.
+_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_PREFIX -u GIT_COMMON_DIR \
+             -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git "$@"; }
+
 guard_fail() { echo "GUARD FAIL [$1] $2" >&2; return 1; }
 
 # 1. The turn must have finished. A stream that stops early leaves a partial answer
@@ -95,7 +107,7 @@ PY
 guard_seal_head_crosscheck() {                 # <seal_dir> <worktree> <upstream_head>
   local sealed wt up
   sealed=$(awk '$1=="head_sha:"{print $2}' "$1/SEAL.txt")
-  wt=$(git -C "$2" rev-parse HEAD)
+  wt=$(_git -C "$2" rev-parse HEAD)
   up="$3"
   [ -n "$sealed" ] || { guard_fail seal-head "no head_sha in $1/SEAL.txt"; return 1; }
   [ "$sealed" = "$wt" ] \

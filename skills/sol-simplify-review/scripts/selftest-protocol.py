@@ -190,7 +190,17 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     check('enumeration-multiline-site-sweep', True, lambda: ci(inv.replace(
         '- class_sweep: searched both reader definitions and callers',
         '- class_sweep:\n  searched both reader definitions\n  and callers')))
-    check('duplicate-fields-rejected', False, lambda: ci(inv.replace('- scope: COMPLETE', '- scope: COMPLETE\n- scope: INCOMPLETE')))
+    check('conflicting-fields-rejected', False, lambda: ci(inv.replace('- scope: COMPLETE', '- scope: COMPLETE\n- scope: INCOMPLETE')))
+    # A rename is one line naming two changed files; both must count, or the seal asks about a
+    # file the reviewer did account for. The reason after the status is prose: a file merely
+    # mentioned there is not an accounting claim, and counting it would let silence pass as
+    # coverage through the back door.
+    check('accounting-rename-pair-counted', True, lambda: ci(inv.replace(
+        '- a.txt — READ — changed surface\n- b.txt — READ',
+        '- `a.txt` \u2192 `b.txt` — READ')))
+    check('accounting-reason-mention-not-counted', False, lambda: ci(inv.replace(
+        '- b.txt — READ', '- a.txt — READ_DIFF_ONLY — also looked at b.txt')))
+    check('identical-restatement-accepted', True, lambda: ci(inv.replace('- scope: COMPLETE', '- scope: COMPLETE\n- scope: COMPLETE')))
     check('enumeration-missing-default', False, lambda: ci(inv.replace('### G-10', '### P-10')))
     check('enumeration-missing-project-class', False, lambda: ci(inv, ['P-01']))
     check('enumeration-not-read-as-complete', False, lambda: ci(inv.replace('b.txt — READ', 'b.txt — NOT_READ')))
