@@ -44,10 +44,18 @@ def accounted_paths(prefix):
     prefix is the path, and it is split only where the reviewer has explicitly marked two
     of them: backticks around each, or a rename arrow between them.
     """
-    quoted = ACCT_BACKTICK.findall(prefix)
-    if quoted:
-        return quoted
-    return [part for part in ACCT_ARROW.split(prefix) if part.strip()]
+    # One claim per rename segment, and within a segment the claim is the FIRST backticked
+    # token. What follows it is prose that may itself be backticked -- measured:
+    # "`…v2.json` (renamed from `.v1.json`)" made the abbreviation in the parenthetical a second
+    # claimed path, which then failed as a file that does not exist. The reviewer named one file
+    # and described where it came from.
+    out = []
+    for segment in ACCT_ARROW.split(prefix):
+        if not segment.strip():
+            continue
+        quoted = ACCT_BACKTICK.findall(segment)
+        out.append(quoted[0] if quoted else segment)
+    return out
 
 
 # Markdown emphasis is how a reviewer writes a verdict, not a way of hiding one. Measured: an

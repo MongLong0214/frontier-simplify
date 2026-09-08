@@ -128,6 +128,8 @@ guard_coverage() {                             # <accounting.json> <seal_dir> <r
   python3 - "$@" <<'PY'
 import json, subprocess, sys
 acct, seal, repo, head = sys.argv[1:5]
+seal_base = next((l.split(": ", 1)[1].strip() for l in open(seal + "/SEAL.txt")
+                  if l.startswith("base_sha:")), head)
 d = json.load(open(acct))
 read = set(d.get("filesRead") or []) | set(d.get("filesReadDiffOnly") or [])
 notread = set(d.get("notRead") or [])
@@ -182,9 +184,30 @@ def settle(paths, counts):
     return out
 
 
+# A rename is one file. The seal lists both endpoints on purpose -- it diffs with
+# --no-renames so neither half can go missing -- but a reviewer accounts for it once, as
+# "`new.json` (renamed from v1)", and the old path is then named only in prose. Refusing that
+# twice is what this is: rounds 9 and 10 were both rejected for the same two paths.
+#
+# Asking git which paths are the same file is not guessing. Where it reports a rename and the
+# new path is accounted for, the old one is covered by the same line -- and where it reports
+# none, nothing changes.
+renames = {}
+for row in subprocess.run(["git", "-C", repo, "diff", "--find-renames", "--name-status",
+                           seal_base, head], capture_output=True, text=True).stdout.splitlines():
+    parts = row.split("\t")
+    if len(parts) == 3 and parts[0].startswith("R"):
+        renames[parts[2]] = parts[1]
+
 counts = d.get("globCounts") or {}
 read = settle(read, counts)
 notread = settle(notread, counts)
+for claimed in list(read):
+    if claimed in renames:
+        read.add(renames[claimed])
+for claimed in list(notread):
+    if claimed in renames:
+        notread.add(renames[claimed])
 if not read:
     bad.append("coverage-empty: no file is accounted READ -- nothing was opened")
 # The harness hands the reviewer these two. They are inputs, not claims about repository

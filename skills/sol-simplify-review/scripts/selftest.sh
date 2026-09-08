@@ -196,8 +196,25 @@ ck coverage-read-diff-only ok   acct "$T/inv-diffonly.md"
 # is arithmetic, not charity. An ambiguous suffix must still fail, or the shorthand becomes a way
 # to claim a file without naming it.
 mkinv "$T/inv-elided.md" "- a.txt — READ — changed
-- \`a.txt\` \u2192 \`...b.txt\` — READ — renamed" "$GOODITEM" "$GOODV"
+- \`a.txt\` → \`...b.txt\` — READ — renamed" "$GOODITEM" "$GOODV"
 ck coverage-elided-unique-resolves ok acct "$T/inv-elided.md"
+# A rename is one file, and a reviewer accounts for it once: "`new` (renamed from `old`)".
+# Asking git which paths are the same file is not guessing, and the parenthetical that says
+# where it came from is prose -- backticked or not. Both halves were needed: rounds 9 and 10 of
+# a real PR were rejected for the same two paths, first as unaccounted and then, once git
+# supplied the pairing, as a fabricated path invented from the description.
+# Needs a real rename in the history, so this case seals its own pair.
+git -C "$REPO" mv b.txt renamed.txt >/dev/null 2>&1
+git -C "$REPO" commit -qm "rename b.txt" >/dev/null 2>&1
+RENHEAD=$(git -C "$REPO" rev-parse HEAD)
+"$HERE/target-seal.sh" seal "$REPO" "$HEAD_SHA" "$RENHEAD" "$T/sr" >/dev/null 2>&1
+printf '## File accounting\n- `renamed.txt` (renamed from `b.txt`) — READ — one file, named once\n## Inventory\n' > "$T/inv-renamed.md"
+rename_ok() { python3 "$HERE/lib/inventory-parse.py" --accounting "$T/inv-renamed.md" > "$T/ren.json" \
+  && guard_coverage "$T/ren.json" "$T/sr" "$REPO" "$RENHEAD"; }
+ck coverage-git-rename-covers-both ok rename_ok
+mkinv "$T/inv-prose-backtick.md" "- a.txt — READ — changed
+- b.txt — READ — see also \`no/such/file.mjs\` for context" "$GOODITEM" "$GOODV"
+ck coverage-prose-backtick-not-a-claim ok acct "$T/inv-prose-backtick.md"
 mkinv "$T/inv-elided-ambiguous.md" "- a.txt — READ — changed
 - \`...txt\` — READ — matches both sealed files" "$GOODITEM" "$GOODV"
 ck coverage-elided-ambiguous-fails fail acct "$T/inv-elided-ambiguous.md"
