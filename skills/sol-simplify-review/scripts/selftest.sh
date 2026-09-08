@@ -88,6 +88,16 @@ printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bas
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}\n{"type":"result","subtype":"success"}\n' > "$T/cl-nocmds.jsonl"
 printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cat ../SEAL.txt"}}]}}\n{"type":"result"}\n' > "$T/cl-sawseal.jsonl"
 printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}\n' > "$T/cl-truncated.jsonl"
+# A transport that dropped and recovered is not an executor that failed. Measured: four reconnect
+# error frames mid-run, then `turn.completed` as the last event, exit 0, and a 58KB inventory --
+# refused as "executor reported failure". The file tells them apart: an error the round outlived
+# is not the error that ended it.
+printf '{"type":"turn.started"}\n{"type":"error","message":"idle timeout waiting for websocket"}\n{"type":"item.completed","item":{"type":"command_execution","command":"ls"}}\n{"type":"turn.completed"}\n' > "$T/recovered.jsonl"
+printf '{"type":"turn.started"}\n{"type":"item.completed","item":{"type":"command_execution","command":"ls"}}\n{"type":"error","message":"died"}\n' > "$T/died.jsonl"
+ck events-error-then-completion ok   guard_turn_completed "$T/recovered.jsonl"
+ck events-error-then-completion-cmds ok guard_cmds_nonzero "$T/recovered.jsonl"
+ck events-error-ends-stream     fail guard_turn_completed "$T/died.jsonl"
+ck events-error-ends-stream-cmds fail guard_cmds_nonzero  "$T/died.jsonl"
 ck claude-turn-completed   ok   guard_turn_completed "$T/cl-good.jsonl"
 ck claude-truncated        fail guard_turn_completed "$T/cl-truncated.jsonl"
 ck claude-cmds-nonzero     ok   guard_cmds_nonzero  "$T/cl-good.jsonl"
