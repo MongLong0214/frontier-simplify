@@ -50,6 +50,19 @@ def accounted_paths(prefix):
     return [part for part in ACCT_ARROW.split(prefix) if part.strip()]
 
 
+# Markdown emphasis is how a reviewer writes a verdict, not a way of hiding one. Measured: an
+# inventory reporting `- verdict: **BLOCK**` with both axes in bold was rejected for reporting
+# neither, because the pattern read only bare capitals. The value is read through the emphasis and
+# stops at the first sentence, since the axes carry their reasoning on the same line.
+EMPHASIS = re.compile(r"[*_`]+")
+
+
+def enumerated(text):
+    """The enumerated value a field line starts with, ignoring emphasis and trailing prose."""
+    m = re.match(r"\s*([A-Za-z_ /]+)", EMPHASIS.sub("", text))
+    return m.group(1).strip().rstrip(".").strip() if m else ""
+
+
 def section(text, heading, stop_prefix="## "):
     i = text.find(heading)
     if i < 0:
@@ -138,8 +151,8 @@ def check_shape(text, rnd):
 def check_verdict(text):
     v = section(text, "## Verdict", stop_prefix="\n#")
     def field(name):
-        m = re.search(r"^\s*[-*]?\s*%s:\s*([A-Z_ ]+)" % name, v, re.M)
-        return m.group(1).strip() if m else ""
+        m = re.search(r"^\s*[-*]?\s*%s:\s*(.+)$" % name, v, re.M)
+        return enumerated(m.group(1)) if m else ""
     enumeration, verification = field("enumeration"), field("verification")
     verdict = field("verdict") or (re.search(r"^\s*(PASS|BLOCK|INCOMPLETE)\b", v.split("\n", 1)[-1],
                                              re.M).group(1) if re.search(

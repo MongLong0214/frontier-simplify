@@ -163,20 +163,38 @@ PY
 # 6. Placeholder verdicts -- a filled field whose content says it has not looked yet.
 #    SKILL.md forbids these in the prompt; the prompt is a request, this is a check.
 guard_no_placeholder() {                       # <inventory.md or response>
-  python3 - "$1" <<'PY'
+  python3 - "$1" <<'PYEOF'
 import re, sys
-t = open(sys.argv[1], encoding="utf-8", errors="replace").read().lower()
-# The template itself ships these words as field descriptions, so the literal
-# placeholder line and the schema legend are not evidence of an unread review.
-t = re.sub(r"^- \w+:\s*<[^>]*>\s*$", "", t, flags=re.M)
-pat = (r"(reading .{0,40}first|need the source|gathering evidence|before scoring"
-       r"|\btbd\b|\bpending\b|placeholder|still analy|to be determined)")
-m = re.search(pat, t)
+raw = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+# The template itself ships these words as field descriptions, so the literal placeholder line and
+# the schema legend are not evidence of an unread review.
+raw = re.sub(r"^- \w+:\s*<[^>]*>\s*$", "", raw, flags=re.M)
+
+# Two different things wear the same words. "reading the diff first" cannot be anything but a
+# reviewer describing work it has not done, wherever it appears. A bare "pending" or "TBD" can be
+# either -- measured: a sound 70KB inventory was rejected because one closure line recommended
+# writing a transition "through a durable pending record". That is the product's vocabulary, not a
+# verdict, and rejecting a whole review for it is how a guard gets switched off.
+#
+# So the bare words are refused only where they stand as the VALUE of a field. That is exactly the
+# shape this guard was built from: `[BLOCKER] TBD -- "Reading the code before scoring."` The
+# structure was complete and the verdict slot said it had not looked yet.
+PHRASES = (r"reading .{0,40}first|need the source|gathering evidence|before scoring"
+           r"|still analy|to be determined|not yet (?:read|reviewed|analysed|analyzed)")
+m = re.search(PHRASES, raw, re.I)
 if m:
     print("GUARD FAIL [placeholder] response contains %r -- a structurally complete "
           "answer that says it has not looked yet" % m.group(0), file=sys.stderr)
     sys.exit(1)
-PY
+
+BARE = re.compile(r"^\s*[-*]?\s*([a-z_ ]+):\s*[*_`\s]*(tbd|pending|placeholder)\b[*_`.\s]*$",
+                  re.I | re.M)
+n = BARE.search(raw)
+if n:
+    print("GUARD FAIL [placeholder] field %r is %r -- a filled slot that says it has not looked yet"
+          % (n.group(1).strip(), n.group(2)), file=sys.stderr)
+    sys.exit(1)
+PYEOF
 }
 
 # 7. Structure -- the round-1 artifact must actually be the round-1 artifact. A reviewer

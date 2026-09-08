@@ -253,6 +253,23 @@ ck item-fail-without-sweep fail guard_item_fields "$T/inv-nosweep.md"
 ck item-good               ok   guard_item_fields "$T/inv-full.md"
 ck item-blocker-good       ok   guard_item_fields "$T/inv-blockblock.md"
 
+# --- emphasis and placeholder position ---
+# A reviewer writes its verdict in bold. Measured: an inventory reporting `- verdict: **BLOCK**`
+# with both axes in bold was rejected for reporting neither axis, and the same run was rejected a
+# second time because one closure line recommended a "durable pending record" -- the product's
+# vocabulary, in a field that was not a verdict.
+mkinv "$T/inv-bold.md" "- a.txt — READ — changed
+- b.txt — READ — changed" "$BLOCKITEM" "- enumeration: **COMPLETE**. every changed file read
+- verification: **COMPLETE**. no item is UNVERIFIED
+- verdict: **BLOCK**"
+ck verdict-reads-through-emphasis ok guard_verdict_consistent "$T/inv-bold.md"
+printf '# Round 1 review inventory\n\n## Verdict\n- verdict: BLOCK\n- closure: write it through a durable pending record replayed on next open\n' > "$T/domain-word.md"
+ck placeholder-domain-word-allowed ok guard_no_placeholder "$T/domain-word.md"
+printf '# Round 1 review inventory\n\n## Inventory\n### O-01 — x\n- status: TBD\n' > "$T/ph-value.md"
+ck placeholder-as-value-rejected fail guard_no_placeholder "$T/ph-value.md"
+printf '# Round 1 review inventory\n\n## Inventory\n### O-01 — x\n- status: **pending**\n' > "$T/ph-bold.md"
+ck placeholder-value-through-emphasis fail guard_no_placeholder "$T/ph-bold.md"
+
 # --- placeholder ---------------------------------------------------------------------------------
 printf '# Round 1 review inventory\n\n## Verdict\n- verdict: BLOCK\n- evidence: TBD, reading the diff first\n' > "$T/ph.md"
 ck placeholder-rejected    fail guard_no_placeholder "$T/ph.md"
