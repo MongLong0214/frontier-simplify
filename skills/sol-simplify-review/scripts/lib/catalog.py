@@ -80,7 +80,16 @@ def render(found, min_rounds):
                    'guard set, and one was an exit-code comparison. The rule was written for tests, '
                    'and every escape was somewhere a test-shaped rule does not look. Name that gap in '
                    'the item; a rule that did not stop the recurrence is evidence about its reach, not '
-                   'about the author.\n')
+                   'about the author.\n'
+                   '\nThe strongest closure for a recurring class is not a rule and not a test: '
+                   'it is a change that makes the class unreachable, so there is no site left to '
+                   'sweep. Two consumers reached this independently -- one closed a set of states '
+                   'against caller input by construction after every predicate it tried was '
+                   'satisfied by a well-formed forgery; the other moved a constraint into a return '
+                   'type, because a rule reaches the sites someone remembers to look at and a type '
+                   'reaches all of them. As that reviewer put it, the compiler is not a site. Prefer '
+                   'that form of closure where the change is available, and say plainly when it is '
+                   'not and a rule is the best that can be had.\n')
         for i, (_, (verbatim, rounds)) in enumerate(sorted(standing.items(), key=lambda kv: -len(kv[1][1])), 1):
             out.append('P-%02d — %s\n      (%s)\n' % (i, verbatim, basis(verbatim, rounds)))
     if once:
