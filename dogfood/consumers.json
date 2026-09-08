@@ -11,6 +11,13 @@
       "repository": "/Users/isaac/projects/sol-simplify",
       "self": true,
       "markers": []
+    },
+    {
+      "repository": "/Users/isaac/projects/repo-factory",
+      "markers": [
+        "repo-factory",
+        "repofactory"
+      ]
     }
   ]
 }
