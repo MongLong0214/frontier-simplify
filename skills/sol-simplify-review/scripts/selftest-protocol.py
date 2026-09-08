@@ -188,6 +188,20 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     cc = lambda text: check_closure(text, inv, h2, sha)
     check('binding-missing-suite-status', False, lambda: ci(inv.replace('- full_suite: UNKNOWN\n', '')))
     check('enumeration-complete', True, lambda: ci(inv))
+    # A reviewer writes the sha in backticks and says how it verified it, and writes the basis then
+    # names its sources. Measured: a binding whose base and head were character-for-character the
+    # sealed values was rejected for naming neither. A line naming two shas stays refused -- that one
+    # is genuinely ambiguous.
+    check('binding-sha-through-markup', True, lambda: ci(inv
+        .replace(f'- base_sha: {base}', f'- base_sha: `{base}` (verified: git rev-parse)')
+        .replace('- basis: DIFF_ONLY', '- basis: DIFF_ONLY (issue body; contracts at head)')))
+    check('binding-two-shas-refused', False, lambda: ci(inv
+        .replace(f'- base_sha: {base}', f'- base_sha: `{base}` or maybe `{h2}`')))
+    # Underscore is markdown emphasis and also a character these values contain. Stripping it turned
+    # DIFF_ONLY into DIFFONLY and made every binding invalid; the verdict axes carry no underscore, so
+    # the fault sat latent until a field that does was read through the same helper.
+    check('binding-underscored-value-survives', True, lambda: ci(inv
+        .replace('- basis: DIFF_ONLY', '- basis: **DIFF_ONLY**')))
     check('enumeration-multiline-site-sweep', True, lambda: ci(inv.replace(
         '- class_sweep: searched both reader definitions and callers',
         '- class_sweep:\n  searched both reader definitions\n  and callers')))

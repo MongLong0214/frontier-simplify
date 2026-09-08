@@ -129,12 +129,19 @@ def check_inventory(text, repo, base, head, expected_ids=()):
     require(inv.check_shape(text, 1) == 0 and inv.check_verdict(text) == 0
             and inv.check_items(text) == 0, 'inventory', 'invalid round-1 inventory')
     binding = fields(section(text, 'Binding'))
+    # A reviewer writes a sha in backticks and adds how it verified it; it writes `basis:
+    # SPECIFIED` and then names the sources. Measured: a binding whose base and head were
+    # character-for-character the sealed values was rejected for naming neither, because the
+    # comparison included the backticks. Compare the sha the line NAMES, and require it to be the
+    # only one there -- a line naming two shas is genuinely ambiguous and still refused.
     for key, expected in [('base_sha', base), ('head_sha', head)]:
-        require(binding.get(key) == expected, 'binding', f'{key} does not match host target')
-    require(binding.get('basis') in {'SPECIFIED', 'DIFF_ONLY'}, 'binding', 'invalid basis')
+        found = set(re.findall(r'\b[0-9a-f]{40}\b', binding.get(key) or ''))
+        require(found == {expected}, 'binding', f'{key} does not match host target')
+    require(inv.enumerated(binding.get('basis') or '') in {'SPECIFIED', 'DIFF_ONLY'},
+            'binding', 'invalid basis')
     for key in ('repository', 'scope', 'full_suite', 'required_platforms', 'unavailable_evidence'):
         require(bool(binding.get(key)), 'binding', f'missing {key}')
-    require(binding['scope'] in {'COMPLETE', 'INCOMPLETE'}, 'binding', 'invalid scope')
+    require(inv.enumerated(binding['scope']) in {'COMPLETE', 'INCOMPLETE'}, 'binding', 'invalid scope')
     items = blocks(text, 'Inventory')
     if verdict(text) == 'PASS':
         require(not any(f.get('status') == 'FAIL' for _, f in items.values()), 'verdict', 'PASS carries a FAIL item')

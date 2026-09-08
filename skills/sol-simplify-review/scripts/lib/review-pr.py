@@ -41,6 +41,13 @@ def main():
         subprocess.run(['git', '-C', str(mirror), 'fetch', '--quiet', 'origin', head, target], check=True)
         base = git(mirror, 'merge-base', target, head).decode().strip()
         (host / f'pr-{a.pr}.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    # The mirror is a --no-checkout object store: its working tree is empty and its index still
+    # lists every file, so `git status` there reports the base commit with hundreds of staged
+    # deletions. Naming it to the reviewer as "Repository" sends the reviewer to a tree that is
+    # not the reviewed head -- measured: a round spent its opening moves discovering that and
+    # building its own checkout, and a less careful reviewer would have reviewed the base.
+    # The reviewer's own cwd is the correct disposable checkout; the prompt gets the identity.
+    os.environ['REVIEW_REPOSITORY_NAME'] = origin
     argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
     print(f'review-pr: consumer host {host}', file=sys.stderr)
     if a.phase == 'auto':

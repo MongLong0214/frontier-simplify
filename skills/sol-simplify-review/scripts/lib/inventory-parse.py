@@ -54,7 +54,12 @@ def accounted_paths(prefix):
 # inventory reporting `- verdict: **BLOCK**` with both axes in bold was rejected for reporting
 # neither, because the pattern read only bare capitals. The value is read through the emphasis and
 # stops at the first sentence, since the axes carry their reasoning on the same line.
-EMPHASIS = re.compile(r"[*_`]+")
+# Asterisks and backticks only. Underscore is markdown emphasis too, but it is also a character
+# these values contain: stripping it turned `DIFF_ONLY` into `DIFFONLY` and made every binding
+# invalid. The verdict axes carry no underscore, so the fault sat latent until a field that does
+# was read through the same helper -- destroying a legitimate value is the same class of defect
+# as failing to read one.
+EMPHASIS = re.compile(r"[*`]+")
 
 
 def enumerated(text):

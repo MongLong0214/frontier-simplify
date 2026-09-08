@@ -143,7 +143,7 @@ def main():
             freeze(d / 'DIFF.patch', git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head))
             freeze(d / 'CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', base, head))
             inputs += ['DIFF.patch', 'CHANGED.txt']
-            values = {'REPOSITORY': str(repo), 'BASE_SHA': base,
+            values = {'REPOSITORY': os.environ.get('REVIEW_REPOSITORY_NAME') or str(repo), 'BASE_SHA': base,
                       'ROUND1_HEAD_SHA': head if phase == 1 else start['round1_head_sha'],
                       'ROUND2_HEAD_SHA': head, 'TRUSTED_INVENTORY_SHA256': start.get('inventory_sha256', ''),
                       'INVENTORY_INTEGRITY_RESULT': 'VERIFIED',
