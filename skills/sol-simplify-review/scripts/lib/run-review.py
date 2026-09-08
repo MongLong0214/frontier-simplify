@@ -57,7 +57,17 @@ def main():
         return 0
     root.mkdir(parents=True, exist_ok=True)
     with (root / '.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        # Non-blocking, and refuse. Waiting looks like a hang from the outside, and a second
+        # invocation that reaches the same round directory writes into the events stream the
+        # first one is still producing -- reported: two runs interleaved into one
+        # events.jsonl, the stream ended without a result event, and the round looked dead
+        # while the first run was in fact still going and finished normally.
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            require(False, 'concurrent-round',
+                    f'another round is already running for this PR ({root}); wait for it rather '
+                    'than starting a second one, which would write into its events stream')
         if a.phase == 'report':
             ledger.report(root, repo)
             return 0
@@ -162,7 +172,16 @@ def main():
             ledger.append(root, start)
             started = True
             # Clone locally so consumer .git and its shared worktrees remain untouched.
-            clone = Path(tempfile.mkdtemp(prefix='review-checkout-'))
+            # A short base, deliberately. macOS puts $TMPDIR at ~49 characters before this
+            # prefix, and a unix socket path is capped at 104 bytes by sun_path -- measured: a
+            # checkout at 81 characters pushed a project's `<stateDir>/hermes.mcp.sock` past the
+            # limit and every socket test in the change failed there with ENOENT. The reviewer
+            # then built its own short worktree to get the evidence, which is evidence produced
+            # outside the seal, and that is worse than the failing tests. The path is still new
+            # every round, so no standing trust accumulates.
+            base = Path('/private/tmp') if Path('/private/tmp').is_dir() else None
+            clone = Path(tempfile.mkdtemp(prefix='r', dir=base) if base
+                         else tempfile.mkdtemp(prefix='review-checkout-'))
             cp = run(['git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', repo, clone])
             require(cp.returncode == 0, 'checkout', cp.stderr.decode().strip())
             require(run(['git', '-C', clone, 'checkout', '--quiet', '--detach', head]).returncode == 0,

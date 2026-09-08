@@ -76,16 +76,41 @@ def section(text, heading, stop_prefix="## "):
     return text[i:j if j > 0 else len(text)]
 
 
+# A grouped line says how many it covers: "all 43 READ in full", "43 files", "(43)". The count
+# is what makes the group checkable -- an unnumbered glob claims a set the reviewer may never
+# have opened, and a number that disagrees with the sealed expansion is refused.
+COUNT = re.compile(r"\b(?:all\s+)?(\d+)\b")
+# A grouped line does not have the per-file shape: the reviewer writes what the group is, then
+# how many, then the status, then the pattern -- "Changed cases -- all 43 READ in full
+# (`scripts/cases/role-*.mjs`)". Matching it with the per-file pattern would mean loosening that
+# one until it starts claiming lines that are not accounting at all, so grouped lines get their
+# own path: a backticked pattern, a status word, and a count, all on one line.
+GROUP = re.compile(r"^\s*[-*]\s+.*`([^`]*[*?\[][^`]*)`", re.M)
+GROUP_STATUS = re.compile(r"\b(READ_DIFF_ONLY|NOT_READ|READ)\b")
+
+
 def accounting(text):
     body = section(text, "## File accounting")
-    out = {"filesRead": [], "filesReadDiffOnly": [], "notRead": []}
+    out = {"filesRead": [], "filesReadDiffOnly": [], "notRead": [], "globCounts": {}}
     key = {"READ": "filesRead", "READ_DIFF_ONLY": "filesReadDiffOnly", "NOT_READ": "notRead"}
-    for prefix, status in ACCT.findall(body):
-        for candidate in accounted_paths(prefix):
+    for line in body.splitlines():
+        m = ACCT.match(line)
+        if not m:
+            g, st, n = GROUP.match(line), GROUP_STATUS.search(line), COUNT.search(line)
+            if g and st and n:
+                out["globCounts"][g.group(1)] = int(n.group(1))
+                out[key[st.group(1)]].append(g.group(1))
+            continue
+        prefix, status = m.group(1), m.group(2)
+        for candidate in accounted_paths(prefix) or accounted_paths(line):
             path = candidate.strip()
             # The template line itself is not a claim about a file.
             if not path or path.startswith("<"):
                 continue
+            if any(ch in path for ch in "*?["):
+                found = COUNT.search(line)
+                if found:
+                    out["globCounts"][path] = int(found.group(1))
             out[key[status]].append(path)
     return out
 

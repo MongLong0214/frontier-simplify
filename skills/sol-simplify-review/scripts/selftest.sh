@@ -206,6 +206,21 @@ mkinv "$T/inv-elided-nomatch.md" "- a.txt — READ — changed
 - \`...nowhere.mjs\` — READ — no sealed path ends with this" "$GOODITEM" "$GOODV"
 ck coverage-elided-nomatch-fails fail acct "$T/inv-elided-nomatch.md"
 
+# Grouping is not silence. A line naming a pattern AND how many it covers is checkable against
+# a list sealed before the reviewer existed: expand the pattern over the sealed files and the
+# number must match. Measured: an inventory accounting for all 52 changed files, 43 of them
+# through one such line, was rejected as though those 43 were never mentioned. An unnumbered
+# pattern stays refused -- that one would let a reviewer claim a directory it never opened.
+mkinv "$T/inv-glob-ok.md" "- a.txt — READ — changed
+- Both text files — all 2 READ in full (\`*.txt\`)" "$GOODITEM" "$GOODV"
+ck coverage-counted-glob-ok      ok   acct "$T/inv-glob-ok.md"
+mkinv "$T/inv-glob-miscount.md" "- a.txt — READ — changed
+- Both text files — all 17 READ in full (\`*.txt\`)" "$GOODITEM" "$GOODV"
+ck coverage-glob-wrong-count     fail acct "$T/inv-glob-miscount.md"
+mkinv "$T/inv-glob-nocount.md" "- a.txt — READ — changed
+- The text files — READ in full (\`*.txt\`)" "$GOODITEM" "$GOODV"
+ck coverage-glob-without-count   fail acct "$T/inv-glob-nocount.md"
+
 # --- shape ---------------------------------------------------------------------------------
 printf 'The change looks fine to me.\n' > "$T/prose.md"
 ck shape-prose-rejected    fail guard_inventory_shape "$T/prose.md" 1

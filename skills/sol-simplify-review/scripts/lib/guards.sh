@@ -135,6 +135,26 @@ target = {l.split("  ", 1)[1] for l in open(seal + "/inventory.txt").read().spli
 bad = []
 
 
+import fnmatch
+
+
+def expand_glob(claim, count):
+    """A glob claim resolves only when its expansion is exactly the count the line states.
+
+    Silence and grouping are not the same thing. A line reading
+    `scripts/cases/role-attachment-*.mjs -- all 43 READ in full` names a set and says how big
+    it is, and both halves are checkable against a list sealed before the reviewer existed:
+    expand the pattern over the sealed files and the number must match. That is arithmetic,
+    not charity -- an unnumbered glob would let a reviewer claim a directory it never opened,
+    and a number that disagrees with the expansion is refused exactly as before.
+
+    Measured: a complete inventory accounting for all 52 changed files, 43 of them through one
+    such line, was rejected as though those 43 had gone unmentioned.
+    """
+    hits = sorted(t for t in target if fnmatch.fnmatch(t, claim))
+    return hits if count is not None and len(hits) == count else []
+
+
 def resolve(path):
     """Expand a reviewer's elided path against the sealed list, or leave it to fail.
 
@@ -152,8 +172,19 @@ def resolve(path):
     return hits[0] if len(hits) == 1 else path
 
 
-read = {resolve(p) for p in read}
-notread = {resolve(p) for p in notread}
+def settle(paths, counts):
+    out = set()
+    for p in paths:
+        if any(ch in p for ch in "*?["):
+            out.update(expand_glob(p, counts.get(p)))
+        else:
+            out.add(resolve(p))
+    return out
+
+
+counts = d.get("globCounts") or {}
+read = settle(read, counts)
+notread = settle(notread, counts)
 if not read:
     bad.append("coverage-empty: no file is accounted READ -- nothing was opened")
 # The harness hands the reviewer these two. They are inputs, not claims about repository
