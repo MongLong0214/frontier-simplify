@@ -1,6 +1,7 @@
 """Deterministic checks on the Markdown handoff; product truth stays with the reviewer."""
 import hashlib
 import importlib.util
+import fnmatch
 import json
 from pathlib import Path
 import re
@@ -129,6 +130,35 @@ def sites(value):
     return {(a or b).rstrip('.,;') for a, b in tokens}
 
 
+def resolve_accounting(entries, target, counts, repo, base, head):
+    """The set of sealed files an accounting actually names.
+
+    A reviewer covers a file by naming it, by naming a counted group that contains it, by an
+    elided path that exactly one sealed file ends with, or by naming the other end of a rename
+    git reports. Each resolution is arithmetic against a list sealed before the reviewer existed;
+    none of it guesses. An unnumbered group and an ambiguous ellipsis stay unresolved.
+    """
+    named = set()
+    for entry in entries:
+        if any(ch in entry for ch in '*?['):
+            hits = [t for t in target if fnmatch.fnmatch(t, entry)]
+            if counts.get(entry) is not None and len(hits) == counts[entry]:
+                named.update(hits)
+            continue
+        if entry.startswith(('...', '\u2026')):
+            suffix = entry.lstrip('.\u2026')
+            hits = [t for t in target if t.endswith(suffix)]
+            named.add(hits[0] if len(hits) == 1 else entry)
+            continue
+        named.add(entry)
+    for row in subprocess.run(['git', '-C', str(repo), 'diff', '--find-renames', '--name-status',
+                               base, head], capture_output=True, text=True).stdout.splitlines():
+        parts = row.split('\t')
+        if len(parts) == 3 and parts[0].startswith('R') and parts[2] in named:
+            named.add(parts[1])
+    return named
+
+
 def check_inventory(text, repo, base, head, expected_ids=()):
     require(inv.check_shape(text, 1) == 0 and inv.check_verdict(text) == 0
             and inv.check_items(text) == 0, 'inventory', 'invalid round-1 inventory')
@@ -162,11 +192,18 @@ def check_inventory(text, repo, base, head, expected_ids=()):
     acct = inv.accounting(text)
     entries = acct['filesRead'] + acct['filesReadDiffOnly'] + acct['notRead']
     require(len(entries) == len(set(entries)), 'coverage', 'duplicate or contradictory file accounting')
+    # Resolve what the accounting NAMES before comparing: a counted group, an elided path, and a
+    # rename all name files that are covered. This is the same resolution guards.sh does, and for
+    # a while it was only there -- two implementations of one question, so a round could pass the
+    # one that had been taught and be refused by the one that had not. That is the second
+    # authority this protocol tells reviewers to look for, in the protocol.
     target = set(changed(repo, base, head))
-    require(target <= set(entries), 'coverage', 'unaccounted files: ' + ', '.join(sorted(target - set(entries))))
+    named = resolve_accounting(entries, target, acct.get('globCounts') or {}, repo, base, head)
+    require(target <= named, 'coverage', 'unaccounted files: ' + ', '.join(sorted(target - named)))
     if acct['notRead']:
         require(a['enumeration'] == 'INCOMPLETE', 'enumeration', 'NOT_READ cannot claim COMPLETE')
-    for path in acct['filesRead'] + acct['filesReadDiffOnly']:
+    for path in resolve_accounting(acct['filesRead'] + acct['filesReadDiffOnly'], target,
+                                   acct.get('globCounts') or {}, repo, base, head):
         exists = any(subprocess.run(['git', '-C', str(repo), 'cat-file', '-e', f'{sha}:{path}'],
                                    capture_output=True).returncode == 0 for sha in (head, base))
         require(exists, 'coverage', f'{path} exists at neither sealed endpoint')

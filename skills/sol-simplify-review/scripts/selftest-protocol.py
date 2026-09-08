@@ -192,6 +192,16 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     # names its sources. Measured: a binding whose base and head were character-for-character the
     # sealed values was rejected for naming neither. A line naming two shas stays refused -- that one
     # is genuinely ambiguous.
+    # The same resolution on both authorities. guards.sh learned counted groups, elided paths and
+    # git renames while check_inventory did not, so a round could satisfy the one that had been
+    # taught and be refused by the one that had not -- reported by a consumer whose 65-file group
+    # counted exactly and was rejected anyway.
+    check('protocol-counted-glob-ok', True, lambda: ci(inv.replace(
+        '- a.txt — READ — changed surface\n- b.txt — READ — changed surface',
+        '- `*.txt` (2 files) — READ — both, grouped')))
+    check('protocol-glob-wrong-count', False, lambda: ci(inv.replace(
+        '- a.txt — READ — changed surface\n- b.txt — READ — changed surface',
+        '- `*.txt` (9 files) — READ — miscounted')))
     check('binding-sha-through-markup', True, lambda: ci(inv
         .replace(f'- base_sha: {base}', f'- base_sha: `{base}` (verified: git rev-parse)')
         .replace('- basis: DIFF_ONLY', '- basis: DIFF_ONLY (issue body; contracts at head)')))
