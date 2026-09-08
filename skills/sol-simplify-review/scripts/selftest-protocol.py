@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline execution, evidence handoff, failure witnesses and consumer adapter tests."""
 import json
+import io
 import os
 import shutil
 from pathlib import Path
@@ -13,6 +14,7 @@ sys.path.insert(0, str(SCRIPTS / 'lib'))
 import ledger
 import protocol
 import catalog
+import replay
 from protocol import Rejected, digest, hunks
 from portability import check as portability
 
@@ -206,6 +208,64 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     check('catalog-no-self-promotion', True, lambda: 'P-01' not in leads and 'mandatory classes' in leads and 'independent changes' in leads)
     check('catalog-keeps-source-rounds', True, lambda: 'round-0001' in leads and 'round-0002' in leads)
     check('catalog-empty-is-none', True, lambda: catalog.render({}) == 'none')
+    # Replay binds the caller's target, not the most convenient historical successful run.
+    replay_out = io.StringIO()
+    check('replay-exact-target-evidence-is-not-approval', True,
+          lambda: replay.replay(root, repo, base, h2, replay_out) == 10
+          and 'No merge authorization' in replay_out.getvalue())
+    check('replay-missing-head', False,
+          lambda: replay.replay(root_for('empty1'), repo, base, h2, io.StringIO()), 'replay-target')
+    check('replay-missing-base', False,
+          lambda: replay.replay(root_for('empty1'), repo, h1, h1, io.StringIO()), 'replay-target')
+    check('replay-no-ledger', False,
+          lambda: replay.replay(t / 'missing-ledger', repo, base, h1, io.StringIO()), 'replay-target')
+    check('replay-failed-execution', False,
+          lambda: replay.replay(root_for('truncated'), repo, base, h1, io.StringIO()), 'replay-evidence')
+    replay_out = io.StringIO()
+    check('replay-legacy-refusal-remains-historical', True,
+          lambda: replay.replay(legacy, repo, base, h1, replay_out) == 10
+          and 'historical_accepted=False' in replay_out.getvalue())
+    before_replay = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    root.chmod(0o555)
+    try:
+        check('replay-readonly-evidence', True,
+              lambda: replay.replay(root, repo, base, h2, io.StringIO()) == 10
+              and before_replay == {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()})
+    finally:
+        root.chmod(0o755)
+    # An interrupted retry must not inherit the prior attempt's availability.
+    saved_ledger = ledger_path.read_bytes()
+    next_round = len(ledger.audit(root, repo)[0]) + 1
+    ledger.append(root, dict(event='started', round=next_round, phase=2,
+                             base_sha=base, head_sha=h2, inputs={}))
+    check('replay-latest-interrupted-attempt', False,
+          lambda: replay.replay(root, repo, base, h2, io.StringIO()), 'replay-evidence')
+    ledger_path.write_bytes(saved_ledger)
+    original_path.write_bytes(saved + b'tampered')
+    check('replay-altered-artifact', False,
+          lambda: replay.replay(root, repo, base, h2, io.StringIO()), 'ledger-integrity')
+    original_path.write_bytes(saved)
+    check('replay-cli-missing-target-exit', True,
+          lambda: cmd('bash', SCRIPTS / 'review-replay.sh', repo, root, base, base).returncode == 5)
+    # Rehashing a wrong input does not bind it to Git. All surrounding execution stays valid.
+    for name, content, tag in [('DIFF.patch', b'wrong patch\n', 'replay-diff'),
+                               ('CHANGED.txt', b'wrong.txt\n', 'replay-changed'),
+                               ('base', None, 'replay-base')]:
+        binding_root = t / tag
+        shutil.copytree(root_for('empty1'), binding_root)
+        rows = ledger.read(binding_root)
+        requested_base = base
+        if name == 'base':
+            requested_base = h1
+            rows[0]['base_sha'] = h1
+        else:
+            (binding_root / 'round-0001' / name).write_bytes(content)
+            rows[0]['inputs'][name] = digest(content)
+        (binding_root / 'ledger.jsonl').unlink()
+        for row in rows:
+            ledger.append(binding_root, row)
+        check(tag + '-rejects-rehashed-substitution', False,
+              lambda: replay.replay(binding_root, repo, requested_base, h1, io.StringIO()), tag)
     # Hunk navigation still includes all Git changes, including metadata and rename endpoints.
     (repo / 'space name.txt').write_text('new\n')
     (repo / 'binary.bin').write_bytes(b'\0new')

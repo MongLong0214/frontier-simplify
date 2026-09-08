@@ -27,6 +27,22 @@ measure the number of distinct bugs or prove the guards are correct. The local h
 runner behavior; its existence does not establish review efficacy. The evidence and changed
 protocol decisions are recorded in [REASSESSMENT.md](REASSESSMENT.md).
 
+A completed feedback loop changes a later review or the product and preserves the evidence of
+that change. For promotion, keep the original review/head and the new site's head, concrete
+reproduction, repair, and unchanged regression test failing before and passing after. A person
+checks the common cause and whether the occurrence is new; a rename, rerun, unclosed defect or
+second class label does not become another independent incident. The same-PR new-site result
+supports broader investigation, while a cross-consumer claim needs the source consumer's evidence
+before it can be counted as independently reproduced. A direct user observation is attributed as
+such, not discarded and not silently upgraded. No prose parser grants this status.
+
+The selector lesson has now changed portable question 4 and both rendered review prompts: inspect
+the named witnesses selected by each alternative, including selectors affected by test renames.
+The replay found that even `pass > 0` can count only a file wrapper. The unchanged consumer test
+fails on the old selectors and passes after repair. This is one demonstrated feedback improvement;
+it is not evidence of higher reviewer recall or safe merge convergence. The execution record and
+remaining limits are appended to [REASSESSMENT.md](REASSESSMENT.md).
+
 `sol-simplify: this poller supplies consumer feedback; remove it when no configured consumer uses
 it.` To uninstall on macOS, boot out `gui/$(id -u)/dev.sol-simplify.review-dogfood` with `launchctl`
 and remove its matching plist from `~/Library/LaunchAgents`.

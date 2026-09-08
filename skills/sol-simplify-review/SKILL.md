@@ -53,6 +53,9 @@ Use these as questions, not assumptions:
    paths, nested/top-level forms, or read/write sides governed differently?
 4. **Claim stronger than test.** Would the named guarantee remain green if its subject were broken?
    Include skips, early returns, fixtures, mocks, and mutation witnesses when the project uses them.
+   For a filtered test command, measure which named witnesses actually ran. Exit 0, a positive
+   pass count (which may count only a file wrapper), or one live alternative can hide another
+   alternative selecting no tests. Replay the broken behavior against its claimed witness.
 5. **Shape mistaken for provenance.** Is syntax, a prefix, a digest-shaped string, or an identifier
    treated as proof of who produced or verified it?
 6. **Private input reaches a public sink.** Can credentials, private paths, raw errors, transcripts,
@@ -83,7 +86,13 @@ Requirements and maintainer-selected project classes are inputs. Automatically h
 same PR, or a reviewer's word "recurs", does not prove independent recurrence and creates no
 mandatory item. Check a lead against the current code before using it. Do not copy yesterday's
 symptom as today's finding. A continuing contract or confirmed recurrence across independent
-changes/components can justify a standing class selected by the maintainer.
+changes/components can justify a standing question selected by the maintainer. Preserve the source
+review and head, the new site's head and reproduction, and the repair with an unchanged regression
+test failing before and passing after. Explain why the site is a different occurrence: a rerun,
+rename, second finding ID or unfixed instance is not independent recurrence. Several questions may
+lead to one defect; count that defect once. Human assessment establishes the shared cause and
+scope; the host checks bytes and executions, not the truth of that assessment. A supplied account
+without the source reproduction remains attributed evidence, not an independently verified count.
 
 Prefer a repair that removes the cause across sites. Consider checks, validators and tests among
 the affected sites, and verify that a test can fail for the behavior it claims to guard.
@@ -113,6 +122,10 @@ fail for their stated claim, shape mistaken for provenance, private inputs reach
 duplicate authorities, stored decisions authorizing themselves, non-atomic evidence/certificates,
 and persisted identities reused after meaning changes. These are questions, not findings or a
 required set of PASS/N/A entries. Investigate supplied project leads on the same basis.
+For filtered test commands, measure each intended witness, including individual selector
+alternatives: exit 0 and a positive pass count can both hide an untested named behavior, including
+a runner counting an empty file wrapper as a pass. Demonstrate the regression test failing on the
+broken behavior before crediting its fix.
 
 For each confirmed defect, give a stable ID, severity (BLOCKER or NIT), the violated requirement
 or behavior, exact sites, expected/actual evidence or reproduction, and a concrete closure.
@@ -175,6 +188,8 @@ DISPUTED or UNVERIFIABLE. Preserve the IDs. Rerun the reproduction or an equally
 inspect the changed test bodies, and check affected siblings. Give evidence for closure; neither
 the implementer's response nor a passing test name establishes it. With no implementer response,
 derive the repair from the diff and say where its intent remains unclear.
+When a repair renames tests, remeasure the commands that select them. A combined selector can
+remain nonempty while silently dropping the only witness for one behavior.
 
 Read the entire remediation diff and behavior directly affected by it. Report causal remediation
 regressions, including correctness, data loss, availability, security and contract failures.

@@ -60,6 +60,20 @@ execution/target evidence checks out can now be read by a follow-up even if its 
 The original limitations remain visible. Generic legacy `inventory` errors cannot be retrospectively
 split when their leaf diagnostic was never recorded. Available leaf reasons are reported separately.
 
+Replay an explicit ledger against an exact requested target, including an old consumer ledger:
+
+```sh
+scripts/review-replay.sh "$REPO" "$LEDGER_DIRECTORY" "$BASE" "$HEAD"
+```
+
+This performs no discovery, fetch, execution or ledger writes. It recomputes execution and byte
+checks, preserves historical rejections and reports each attempt. Exit 5 names a missing target,
+missing execution evidence or integrity failure; exit 10 means the latest attempt at that exact
+base..head has preserved evidence for human assessment. An earlier intact attempt cannot hide a
+later interrupted attempt at the same target. Neither exit authorizes merging. CI status, product
+test counts, mutation measurements and contract versions written in a prompt are not attested by
+these receipts. Replay does not manufacture those missing measurements from a reviewer's prose.
+
 Host ownership is an execution-environment responsibility. A digest proves byte equality, not
 provenance, and same-user access can rewrite the directory or disable a hook. Event checks are not
 an OS sandbox or proof of exhaustive reading. Keep raw logs private: they may contain source and
@@ -76,6 +90,9 @@ the model. Without an explicit base, phase 1 needs `REVIEW_TARGET_BRANCH`; phase
 catalog candidates are attributed leads from the current PR, including rejected reviews. Repetition
 and a reviewer's assertion of recurrence never promote a mandatory class. Explicit host catalogs
 remain usable inputs, and findings must be checked against current code.
+Promotion into a standing question needs reviewed source and new-site evidence with a failing
+before/passing after witness, or an explicit continuing contract. The selected question is delivered
+through the prompts; its source evidence stays with the consumer, outside the portable skill.
 
 ```sh
 scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto
