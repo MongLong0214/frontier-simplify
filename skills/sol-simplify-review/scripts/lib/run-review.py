@@ -88,8 +88,13 @@ def main():
             start['base_sha'] = base
             require(run(['git', '-C', repo, 'merge-base', '--is-ancestor', base, head]).returncode == 0,
                     'ancestry', 'base is not an ancestor of head')
-            if n >= 3 or (phase == 1 and originals):
-                require(originals, 'round-budget', 'cannot name escapes without a sealed round-1 inventory')
+            # Naming escapes presupposes something to escape FROM. The round number counts every
+            # attempt, including ones this harness rejected for shape; if none of them was ever
+            # accepted, round 1 has not happened yet and repeating phase 1 is not an escape.
+            # Measured: two rounds rejected by guards that were themselves wrong took the counter
+            # to 3, and the budget then demanded escape IDs from an inventory that did not exist.
+            # The gate had locked itself out of its own first round.
+            if originals and (n >= 3 or phase == 1):
                 path = os.environ.get('REVIEW_ESCAPES', '')
                 require(path, 'round-budget', 'round 3+ or scope restart requires REVIEW_ESCAPES naming original item IDs and evidence')
                 copy_input(path, d, 'ESCAPES.md')

@@ -277,6 +277,18 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     events(t / 'events', inv)
     def host(phase, head, pr='17', environment=env):
         return cmd(SCRIPTS / 'review-round.sh', phase, repo, head, pr, base, 'stub', env=environment)
+    # A retry after rejections is round 1 happening, not an escape from it. Measured on a real PR:
+    # two rounds this harness rejected for shape took the counter to 3, and the budget then demanded
+    # escape IDs naming items in an inventory that was never accepted. The gate had locked itself out
+    # of its own first round, and the only way through would have been to invent the IDs.
+    reject = dict(env, REVIEW_STUB=str(t / 'bad-events'))
+    events(t / 'bad-events', inv.replace('\n## Verdict\n', '\n## Not a verdict\n'))
+    def rejected(head, pr):
+        return cmd(SCRIPTS / 'review-round.sh', '1', repo, head, pr, base, 'stub', env=reject)
+    check('host-rejected-round-is-not-a-round-1', True,
+          lambda: (rejected(h1, '31').returncode != 0 and rejected(h1, '31').returncode != 0
+                   and 'round-budget' not in cmd(SCRIPTS / 'review-round.sh', '1', repo, h1, '31',
+                                                 base, 'stub', env=env).stderr))
     r1 = host('1', h1)
     root = Path(host('path', h1).stdout.strip())
     check('host-block-exits-nonzero', True, lambda: r1.returncode != 0)
