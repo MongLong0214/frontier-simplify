@@ -469,10 +469,19 @@ stopped before `## Verdict`; another produced 82 items with `class_sweep` absent
 them and no Verdict section at all. Both were refused by the guards, correctly: an artifact missing
 the field that records the sweep has not recorded a sweep.
 
-The two are told apart by the item count, not by the missing fields. A model that cannot see the
-sites produces FEWER items; a round that ran out of room produces MORE and reports less about each
--- measured, 51 items then 82, the second losing every field and then its tail. It enumerated
-harder and recorded less, which is a budget shape and not a comprehension one.
+The two are told apart by field completeness, with the count as a secondary signal. Measured on one
+head, one prompt, three attempts: 51 items with `class_sweep` on none of them; then 82 items with
+`class_sweep` on none and no Verdict at all; then, on a stronger executor, 34 items with
+`class_sweep` and evidence on every one and the artifact closed. The good round produced the FEWEST
+items. So a high count is a symptom of a round in trouble rather than of thoroughness -- it
+enumerated hardest and recorded least -- and a low count means nothing on its own: it is few thin
+items that indicate a model which cannot see the sites, and few thick ones that indicate a round
+that finished. Read the fields first.
+
+That also answers whether such a field is being treated as optional. It was not: the same prompt
+filled it on every item once the executor could afford it. A field that a larger model fills and a
+smaller one drops is a budget problem, and making it structurally unavoidable would be answering
+that with a schema change.
 
 "The model was too small" and "the change is too large for one bounded review" produce the same
 missing sections and take different fixes, so read the counts before choosing. Re-run with a stronger

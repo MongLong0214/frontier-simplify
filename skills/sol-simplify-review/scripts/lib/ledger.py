@@ -80,8 +80,21 @@ def recompute(repo, directory, start, checkout=None):
         require(mandatory <= start['inputs'].keys(), 'input-digests', 'required input digest missing')
         verify_hashes(directory, start['inputs'])
     check('input-digests', inputs)
-    check('executor-exit', lambda: require((directory / 'executor-exit.txt').read_text().strip() == '0',
-                                           'executor-exit', 'executor failed; see executor.err'))
+    # Refusing on a non-zero exit stays the default: a round whose executor died is not evidence,
+    # and nothing here can tell a death from a drop. But the two are not the same event, and the
+    # message should not read as though they were -- reported: a run reconnected, kept producing
+    # events, and closed a well-formed inventory, and the refusal said only "executor failed".
+    # Say the code, and say whether an artifact was written, so the reader can tell which happened.
+    def executor_exit():
+        code = (directory / 'executor-exit.txt').read_text().strip()
+        artifact = directory / 'ARTIFACT.md'
+        wrote = artifact.exists() and artifact.stat().st_size > 0
+        require(code == '0', 'executor-exit',
+                'executor exited %s; see executor.err. An artifact %s written -- a transport that '
+                'dropped and recovered leaves one, an executor that died does not, and this check '
+                'refuses either way.'
+                % (code, 'WAS' if wrote else 'was not'))
+    check('executor-exit', executor_exit)
     for name in ('guard_turn_completed', 'guard_cmds_nonzero', 'guard_seal_unseen'):
         args = [directory / 'events.jsonl'] + ([directory] if name == 'guard_seal_unseen' else [])
         check(name, lambda name=name, args=args: shell_guard(name, *args))
