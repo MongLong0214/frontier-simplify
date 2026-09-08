@@ -71,7 +71,16 @@ def render(found, min_rounds):
         out.append('Standing project classes. Each is backed by recurrence across this project\'s own '
                    'rounds, which is the promotion rule this protocol states. Instantiate '
                    'each as an inventory item and sweep it as ONE class: the sweep is every site '
-                   'where the class can hold, not the site that produced this round\'s symptom.\n')
+                   'where the class can hold, not the site that produced this round\'s symptom.\n'
+                   '\nWhere a class recurred although the project had ALREADY written a rule against '
+                   'it, the sweep is not whether the rule was followed -- it is where the rule does '
+                   'not reach. Reported from a consumer: a repository carrying "negative control must '
+                   'be able to fail" produced four more instances in one batch, and none of them was '
+                   'a test. Three were re-check scripts living outside the test suite and outside the '
+                   'guard set, and one was an exit-code comparison. The rule was written for tests, '
+                   'and every escape was somewhere a test-shaped rule does not look. Name that gap in '
+                   'the item; a rule that did not stop the recurrence is evidence about its reach, not '
+                   'about the author.\n')
         for i, (_, (verbatim, rounds)) in enumerate(sorted(standing.items(), key=lambda kv: -len(kv[1][1])), 1):
             out.append('P-%02d — %s\n      (%s)\n' % (i, verbatim, basis(verbatim, rounds)))
     if once:
