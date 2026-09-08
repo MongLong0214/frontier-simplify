@@ -171,4 +171,6 @@ A tool against manufactured process should not manufacture process. The payload 
 
 MIT
 
-Review protocol execution and offline guards: [runner guide](skills/sol-simplify-review/README.md).
+Review assistance and evidence preservation: [runner guide](skills/sol-simplify-review/README.md).
+The review skill no longer claims automatic merge approval or two-round convergence; see the
+[consumer reassessment](dogfood/REASSESSMENT.md).

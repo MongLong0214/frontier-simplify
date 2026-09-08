@@ -3,12 +3,11 @@
 import argparse
 import fcntl
 import json
-import re
 import os
 from pathlib import Path
 import subprocess
 import sys
-from protocol import digest, git, require, Rejected
+from protocol import digest, git, require, Rejected, review_exit
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 
@@ -49,46 +48,18 @@ def main():
     # building its own checkout, and a less careful reviewer would have reviewed the base.
     # The reviewer's own cwd is the correct disposable checkout; the prompt gets the identity.
     os.environ['REVIEW_REPOSITORY_NAME'] = origin
-    # The project's own rounds are its catalog. SKILL.md asks every item for a
-    # `catalog_candidate` and states when one earns a standing entry; nothing collected them,
-    # so nine rounds on one PR emitted thirty-eight candidates -- one of which said in its own
-    # words "this is the third time" and named the three sites -- while every round after the
-    # first began from `none` and rediscovered the class at a new site. Harvesting them is what
-    # makes using this protocol improve it, rather than only improving what it is pointed at.
-    # An explicit REVIEW_CATALOG still wins: the host may always override what it feeds back.
-    if not os.environ.get('REVIEW_CATALOG'):
-        # Ask the runner where this PR's rounds live rather than rebuilding the path here. The
-        # first version pointed at the consumer host directory, which holds the mirror and the PR
-        # metadata but no round artifacts, so the harvest found nothing and injected nothing --
-        # silently. A feedback loop that no-ops is worse than one that is missing: nothing says it
-        # is not working, and the rounds go on rediscovering the class it was built to carry.
+    # History supplies attributed leads, never required IDs or self-promoted obligations.
+    if not os.environ.get('REVIEW_CATALOG') and a.phase in {'1', 'auto'}:
         ledger_root = subprocess.run([str(SCRIPTS / 'review-round.sh'), 'path', str(mirror),
                                       head, str(a.pr)], capture_output=True, text=True)
-        if ledger_root.returncode == 0 and ledger_root.stdout.strip():
-            harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
-                                        ledger_root.stdout.strip()], capture_output=True, text=True)
-            ids = re.findall(r'^P-\d+', harvested.stdout, re.M)
-            # Only a catalog with standing classes is worth supplying. The renderer also prints
-            # candidates "raised once, not yet standing", and handing those over as a catalog made
-            # the runner demand ids for classes that do not exist: the run said it had carried
-            # forward nothing and then refused for a missing P-01 in the same breath. Leads are
-            # not obligations, which is what the renderer says about them.
-            if harvested.returncode == 0 and ids:
-                os.environ['REVIEW_CATALOG'] = harvested.stdout
-                # A supplied catalog is only supplied if the inventory has to answer for it. The
-                # runner checks that every declared class was instantiated, and it learns which
-                # ones from REVIEW_EXPECTED_IDS -- so handing over the text without the ids makes
-                # the classes optional, which is the same as not carrying them. Derived from the
-                # rendered catalog rather than tracked beside it: two lists of the same thing is
-                # how one goes stale.
-                if not os.environ.get('REVIEW_EXPECTED_IDS'):
-                    os.environ['REVIEW_EXPECTED_IDS'] = ','.join(ids)
-                # Count the classes as classes and the rounds as rounds. Printing one number
-                # under the other's name is how "carried forward from 0" appeared above a refusal
-                # that named a class.
-                seen = len(list(Path(ledger_root.stdout.strip()).glob('round-*/ARTIFACT.md')))
-                print('review-pr: %d standing class(es) carried forward from %d round(s): %s'
-                      % (len(ids), seen, ', '.join(ids)), file=sys.stderr)
+        require(ledger_root.returncode == 0, 'consumer', ledger_root.stderr.strip())
+        import ledger
+        ledger.audit(Path(ledger_root.stdout.strip()), mirror)
+        harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
+                                    ledger_root.stdout.strip()], capture_output=True, text=True)
+        require(harvested.returncode == 0, 'consumer', harvested.stderr.strip())
+        os.environ['REVIEW_CATALOG'] = harvested.stdout
+        print('review-pr: project history supplied as leads, not standing obligations', file=sys.stderr)
     argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
     print(f'review-pr: consumer host {host}', file=sys.stderr)
     if a.phase == 'auto':
@@ -101,20 +72,18 @@ def main():
         ledger_root = runner.root_for(mirror, str(a.pr))
         starts, ends, originals = ledger.audit(ledger_root, mirror)
         response = Path(os.environ.get('REVIEW_RESPONSE', str(host / f'pr-{a.pr}-response.md')))
-        escapes = Path(os.environ.get('REVIEW_ESCAPES', str(host / f'pr-{a.pr}-escapes.md')))
         if response.exists():
             os.environ['REVIEW_RESPONSE'] = str(response)
-        if escapes.exists():
-            os.environ['REVIEW_ESCAPES'] = str(escapes)
         latest = starts[max(starts)] if starts else None
         if latest and latest['head_sha'] == head:
             end = ends.get(latest['round'], {})
             changed_inputs = any(path.exists() and digest(path.read_bytes()) != latest['inputs'].get(name)
-                                 for name, path in [('IMPLEMENTER_RESPONSE.md', response), ('ESCAPES.md', escapes)])
+                                 for name, path in [('IMPLEMENTER_RESPONSE.md', response)])
             if end.get('executed') or not changed_inputs:
                 ledger.report(ledger_root, mirror)
-                fixture_chain = any(s.get('executor') == 'stub' for s in starts.values())
-                return 0 if end.get('accepted') and end.get('verdict') in {'PASS', 'PASS WITH NITS'} and not fixture_chain else 5
+                available = ledger.evidence_available(ledger.recompute(
+                    mirror, ledger_root / f"round-{latest['round']:04}", latest), end)
+                return review_exit(available)
         argv[1] = '2' if originals else '1'
     return subprocess.run(argv).returncode
 

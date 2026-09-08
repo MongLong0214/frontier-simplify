@@ -1,4 +1,8 @@
-# review protocol — benchmark, not yet run
+# Historical review protocol benchmark — not run
+
+This describes the original two-round hypothesis, not the current runner contract. The
+[consumer reassessment](../../dogfood/REASSESSMENT.md) withdrew that claim and automatic approval.
+The proposed controlled benchmark below still has no results.
 
 `skills/sol-simplify-review` ships with its design (`DESIGN.md`) and **without a measured claim.**
 The rest of this repository reports numbers; this skill does not have them yet, and saying it

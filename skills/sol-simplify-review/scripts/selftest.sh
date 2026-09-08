@@ -31,7 +31,7 @@ git -C "$REPO" init -q
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 for i in 1 2 3; do
   printf 'v%s\n' "$i" > "$REPO/a.txt"; printf 'w%s\n' "$i" > "$REPO/b.txt"
-  git -C "$REPO" add -A >/dev/null; git -C "$REPO" commit -qm "c$i"
+  git -C "$REPO" add a.txt b.txt >/dev/null; git -C "$REPO" commit -qm "c$i"
 done
 HEAD_SHA=$(git -C "$REPO" rev-parse HEAD)
 BASE=$(git -C "$REPO" rev-parse HEAD~2)
@@ -47,6 +47,9 @@ cp "$T/s/inventory.txt" "$T/s/inv.bak"; echo "deadbeef  tampered.txt" >> "$T/s/i
 ck seal-tampered-inventory fail "$HERE/target-seal.sh" verify "$REPO" "$T/s"
 mv "$T/s/inv.bak" "$T/s/inventory.txt"
 ck seal-restored           ok   "$HERE/target-seal.sh" verify "$REPO" "$T/s"
+chmod a-w "$T/s"
+ck seal-readonly-evidence  ok   "$HERE/target-seal.sh" verify "$REPO" "$T/s"
+chmod u+w "$T/s"
 
 # --- guard 1/2: event stream ------------------------------------------------------------
 printf '{"type":"turn.started"}\n{"type":"item.completed","item":{"type":"agent_message","text":"x"}}\n' > "$T/truncated.jsonl"
@@ -128,226 +131,6 @@ env_leak_cannot_forge_a_match() {
   [ "$r" -ne 0 ]
 }
 ck crosscheck-leak-cannot-forge-match ok env_leak_cannot_forge_a_match
-
-# --- the inventory as data ----------------------------------------------------------------
-mkinv() { # <file> <accounting-block> <items-block> <verdict-block>
-  cat > "$1" <<EOF
-# Round 1 review inventory
-
-## Binding
-- repository: $REPO
-- base_sha: $BASE
-- head_sha: $HEAD_SHA
-- basis: DIFF_ONLY
-- scope: COMPLETE
-
-## File accounting
-$2
-
-## Inventory
-$3
-
-## Routed exclusions encountered
-- none
-
-## Verdict
-$4
-EOF
-}
-GOODITEM='### G-01 — absence is not success
-- kind: portable-class
-- source: G2
-- impact: BLOCKER
-- must_hold: a missing value never becomes a default
-- applies_to: a.txt readers
-- status: PASS
-- applicable_sites: a.txt:1
-- failing_sites: none
-- evidence: read a.txt, no default path exists
-- reproduction: not applicable
-- class_sweep: a.txt, b.txt
-- dismissed_sites: none
-- closure: not applicable
-- catalog_candidate: none'
-GOODV='- enumeration: COMPLETE
-- verification: COMPLETE
-- verdict: PASS'
-
-mkinv "$T/inv-full.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$GOODITEM" "$GOODV"
-mkinv "$T/inv-partial.md" "- a.txt — READ — changed" "$GOODITEM" "$GOODV"
-mkinv "$T/inv-declared.md" "- a.txt — READ — changed
-- b.txt — NOT_READ — out of budget" "$GOODITEM" "- enumeration: INCOMPLETE
-- verification: PARTIAL
-- verdict: INCOMPLETE"
-mkinv "$T/inv-fab.md" "- a.txt — READ — changed
-- b.txt — READ — changed
-- no/such/file.mjs — READ — invented" "$GOODITEM" "$GOODV"
-mkinv "$T/inv-empty.md" "- a.txt — NOT_READ — skipped
-- b.txt — NOT_READ — skipped" "$GOODITEM" "$GOODV"
-
-acct() { python3 "$HERE/lib/inventory-parse.py" --accounting "$1" > "$1.json" && \
-         guard_coverage "$1.json" "$T/s" "$REPO" "$HEAD_SHA"; }
-ck coverage-full           ok   acct "$T/inv-full.md"
-ck coverage-declared-unread ok  acct "$T/inv-declared.md"
-ck coverage-silent-partial fail acct "$T/inv-partial.md"
-ck coverage-fabricated     fail acct "$T/inv-fab.md"
-ck coverage-empty          fail acct "$T/inv-empty.md"
-
-# READ_DIFF_ONLY is coverage, not silence -- the skill allows it for a one-hunk change.
-mkinv "$T/inv-diffonly.md" "- a.txt — READ — changed
-- b.txt — READ_DIFF_ONLY — one-hunk test change" "$GOODITEM" "$GOODV"
-ck coverage-read-diff-only ok   acct "$T/inv-diffonly.md"
-
-# Reviewers write the far side of a rename as `...new.txt`, and did so in two of four rounds on
-# one PR. Read literally that is a file that does not exist, so the round is rejected twice: once
-# as a fabricated path, once for the real file left silent. It resolves only when exactly one
-# sealed path ends with the suffix -- the sealed list is fixed before the reviewer exists, so that
-# is arithmetic, not charity. An ambiguous suffix must still fail, or the shorthand becomes a way
-# to claim a file without naming it.
-mkinv "$T/inv-elided.md" "- a.txt — READ — changed
-- \`a.txt\` → \`...b.txt\` — READ — renamed" "$GOODITEM" "$GOODV"
-ck coverage-elided-unique-resolves ok acct "$T/inv-elided.md"
-# A rename is one file, and a reviewer accounts for it once: "`new` (renamed from `old`)".
-# Asking git which paths are the same file is not guessing, and the parenthetical that says
-# where it came from is prose -- backticked or not. Both halves were needed: rounds 9 and 10 of
-# a real PR were rejected for the same two paths, first as unaccounted and then, once git
-# supplied the pairing, as a fabricated path invented from the description.
-# Needs a real rename in the history, so this case seals its own pair.
-git -C "$REPO" mv b.txt renamed.txt >/dev/null 2>&1
-git -C "$REPO" commit -qm "rename b.txt" >/dev/null 2>&1
-RENHEAD=$(git -C "$REPO" rev-parse HEAD)
-"$HERE/target-seal.sh" seal "$REPO" "$HEAD_SHA" "$RENHEAD" "$T/sr" >/dev/null 2>&1
-printf '## File accounting\n- `renamed.txt` (renamed from `b.txt`) — READ — one file, named once\n## Inventory\n' > "$T/inv-renamed.md"
-rename_ok() { python3 "$HERE/lib/inventory-parse.py" --accounting "$T/inv-renamed.md" > "$T/ren.json" \
-  && guard_coverage "$T/ren.json" "$T/sr" "$REPO" "$RENHEAD"; }
-ck coverage-git-rename-covers-both ok rename_ok
-mkinv "$T/inv-prose-backtick.md" "- a.txt — READ — changed
-- b.txt — READ — see also \`no/such/file.mjs\` for context" "$GOODITEM" "$GOODV"
-ck coverage-prose-backtick-not-a-claim ok acct "$T/inv-prose-backtick.md"
-mkinv "$T/inv-elided-ambiguous.md" "- a.txt — READ — changed
-- \`...txt\` — READ — matches both sealed files" "$GOODITEM" "$GOODV"
-ck coverage-elided-ambiguous-fails fail acct "$T/inv-elided-ambiguous.md"
-mkinv "$T/inv-elided-nomatch.md" "- a.txt — READ — changed
-- b.txt — READ — changed
-- \`...nowhere.mjs\` — READ — no sealed path ends with this" "$GOODITEM" "$GOODV"
-ck coverage-elided-nomatch-fails fail acct "$T/inv-elided-nomatch.md"
-
-# Grouping is not silence. A line naming a pattern AND how many it covers is checkable against
-# a list sealed before the reviewer existed: expand the pattern over the sealed files and the
-# number must match. Measured: an inventory accounting for all 52 changed files, 43 of them
-# through one such line, was rejected as though those 43 were never mentioned. An unnumbered
-# pattern stays refused -- that one would let a reviewer claim a directory it never opened.
-mkinv "$T/inv-glob-ok.md" "- a.txt — READ — changed
-- Both text files — all 2 READ in full (\`*.txt\`)" "$GOODITEM" "$GOODV"
-ck coverage-counted-glob-ok      ok   acct "$T/inv-glob-ok.md"
-mkinv "$T/inv-glob-miscount.md" "- a.txt — READ — changed
-- Both text files — all 17 READ in full (\`*.txt\`)" "$GOODITEM" "$GOODV"
-ck coverage-glob-wrong-count     fail acct "$T/inv-glob-miscount.md"
-mkinv "$T/inv-glob-nocount.md" "- a.txt — READ — changed
-- The text files — READ in full (\`*.txt\`)" "$GOODITEM" "$GOODV"
-ck coverage-glob-without-count   fail acct "$T/inv-glob-nocount.md"
-
-# --- shape ---------------------------------------------------------------------------------
-printf 'The change looks fine to me.\n' > "$T/prose.md"
-ck shape-prose-rejected    fail guard_inventory_shape "$T/prose.md" 1
-ck shape-good-accepted     ok   guard_inventory_shape "$T/inv-full.md" 1
-mkinv "$T/inv-noitems.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "" "$GOODV"
-ck shape-no-items-rejected fail guard_inventory_shape "$T/inv-noitems.md" 1
-
-# --- verdict consistency ---------------------------------------------------------------------
-# "A reproduced blocker is a fact; an unfinished sweep does not unmake it."
-BLOCKITEM='### G-02 — self-asserted authority
-- kind: portable-class
-- source: G1
-- impact: BLOCKER
-- must_hold: a caller-supplied label never decides the claim
-- applies_to: a.txt
-- status: FAIL
-- applicable_sites: a.txt:1, b.txt:1
-- failing_sites: a.txt:1
-- evidence: ran it, a.txt:1 accepts the caller label
-- reproduction: printf x > a.txt && run
-- class_sweep: a.txt, b.txt
-- dismissed_sites: none
-- closure: recompute from evidence plus a regression test
-- catalog_candidate: none'
-mkinv "$T/inv-blockpass.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$BLOCKITEM" "$GOODV"
-ck verdict-blocker-as-pass fail guard_verdict_consistent "$T/inv-blockpass.md"
-mkinv "$T/inv-blockblock.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$BLOCKITEM" "- enumeration: COMPLETE
-- verification: COMPLETE
-- verdict: BLOCK"
-ck verdict-blocker-as-block ok  guard_verdict_consistent "$T/inv-blockblock.md"
-mkinv "$T/inv-incpass.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$GOODITEM" "- enumeration: INCOMPLETE
-- verification: COMPLETE
-- verdict: PASS"
-ck verdict-incomplete-pass fail guard_verdict_consistent "$T/inv-incpass.md"
-mkinv "$T/inv-oneaxis.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$GOODITEM" "- verdict: PASS"
-ck verdict-one-axis-only   fail guard_verdict_consistent "$T/inv-oneaxis.md"
-ck verdict-good            ok   guard_verdict_consistent "$T/inv-full.md"
-
-# An UNVERIFIED item with verification: COMPLETE is the shape that quietly promotes an
-# item nobody could exercise.
-UNVITEM=$(printf '%s' "$GOODITEM" | sed 's/^- status: PASS$/- status: UNVERIFIED/')
-mkinv "$T/inv-unv.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$UNVITEM" "$GOODV"
-ck verdict-unverified-complete fail guard_verdict_consistent "$T/inv-unv.md"
-
-# --- item fields -------------------------------------------------------------------------------
-NASWEEP=$(printf '%s' "$GOODITEM" | sed -e 's/^- status: PASS$/- status: N\/A/' -e 's/^- evidence: .*$/- evidence:/' -e 's/^- source: G2$/- source:/')
-mkinv "$T/inv-na.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$NASWEEP" "$GOODV"
-ck item-na-without-reason  fail guard_item_fields "$T/inv-na.md"
-NOSWEEP=$(printf '%s' "$BLOCKITEM" | sed 's/^- class_sweep: .*$/- class_sweep: none/')
-mkinv "$T/inv-nosweep.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$NOSWEEP" "- enumeration: COMPLETE
-- verification: COMPLETE
-- verdict: BLOCK"
-ck item-fail-without-sweep fail guard_item_fields "$T/inv-nosweep.md"
-# A defect in a comment has no runtime reproduction, and SKILL.md's template says so: it reads
-# `reproduction: <minimal reproduction, or not applicable>`. What a FAIL cannot be without is
-# evidence a reader can go and check.
-NOREPRO=$(printf '%s' "$BLOCKITEM" | sed 's|^- reproduction: .*$|- reproduction: not applicable|')
-mkinv "$T/inv-norepro.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$NOREPRO" "- enumeration: COMPLETE
-- verification: COMPLETE
-- verdict: BLOCK"
-ck item-fail-not-applicable-repro ok guard_item_fields "$T/inv-norepro.md"
-NOEVID=$(printf '%s' "$NOREPRO" | sed 's|^- evidence: .*$|- evidence: none|')
-mkinv "$T/inv-noevid.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$NOEVID" "- enumeration: COMPLETE
-- verification: COMPLETE
-- verdict: BLOCK"
-ck item-fail-without-evidence fail guard_item_fields "$T/inv-noevid.md"
-ck item-good               ok   guard_item_fields "$T/inv-full.md"
-ck item-blocker-good       ok   guard_item_fields "$T/inv-blockblock.md"
-
-# --- emphasis and placeholder position ---
-# A reviewer writes its verdict in bold. Measured: an inventory reporting `- verdict: **BLOCK**`
-# with both axes in bold was rejected for reporting neither axis, and the same run was rejected a
-# second time because one closure line recommended a "durable pending record" -- the product's
-# vocabulary, in a field that was not a verdict.
-mkinv "$T/inv-bold.md" "- a.txt — READ — changed
-- b.txt — READ — changed" "$BLOCKITEM" "- enumeration: **COMPLETE**. every changed file read
-- verification: **COMPLETE**. no item is UNVERIFIED
-- verdict: **BLOCK**"
-ck verdict-reads-through-emphasis ok guard_verdict_consistent "$T/inv-bold.md"
-printf '# Round 1 review inventory\n\n## Verdict\n- verdict: BLOCK\n- closure: write it through a durable pending record replayed on next open\n' > "$T/domain-word.md"
-ck placeholder-domain-word-allowed ok guard_no_placeholder "$T/domain-word.md"
-printf '# Round 1 review inventory\n\n## Inventory\n### O-01 — x\n- status: TBD\n' > "$T/ph-value.md"
-ck placeholder-as-value-rejected fail guard_no_placeholder "$T/ph-value.md"
-printf '# Round 1 review inventory\n\n## Inventory\n### O-01 — x\n- status: **pending**\n' > "$T/ph-bold.md"
-ck placeholder-value-through-emphasis fail guard_no_placeholder "$T/ph-bold.md"
-
-# --- placeholder ---------------------------------------------------------------------------------
-printf '# Round 1 review inventory\n\n## Verdict\n- verdict: BLOCK\n- evidence: TBD, reading the diff first\n' > "$T/ph.md"
-ck placeholder-rejected    fail guard_no_placeholder "$T/ph.md"
-ck placeholder-clean       ok   guard_no_placeholder "$T/inv-full.md"
 
 # --- prompt rendering ------------------------------------------------------------------------------
 r1() { python3 "$HERE/lib/render-prompt.py" "$SKILL" 1 REPOSITORY=r BASE_SHA=b ROUND1_HEAD_SHA=h \

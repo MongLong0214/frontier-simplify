@@ -44,7 +44,7 @@ paths = sorted(p for p in git('diff', '--no-renames', '--name-only', '-z', base,
 for raw in paths:
     path = raw.decode('utf-8')
     if '\n' in path or '\r' in path:
-        sys.exit('GUARD FAIL [target-path] newline filenames cannot be represented in Markdown file accounting')
+        sys.exit('GUARD FAIL [target-path] newline filenames cannot be represented in the line-based target inventory')
     p = subprocess.run(['git', '-C', repo, 'rev-parse', '--verify', '--quiet', head + ':' + path], capture_output=True)
     blob = p.stdout.decode().strip() if p.returncode == 0 else 'absent'
     print(blob + '  ' + path)
@@ -92,12 +92,11 @@ cmd_verify() {
   base=$(seal_field "$out" base_sha); head=$(seal_field "$out" head_sha)
   inv=$(seal_field "$out" target_sha256); n=$(seal_field "$out" inventory_files)
 
-  local recomputed; recomputed=$(mktemp "$out/.inventory.XXXXXX")
-  build_inventory "$repo" "$base" "$head" > "$recomputed"
   local now stored
   [ "$(wc -l < "$out/inventory.txt" | tr -d ' ')" = "$n" ] || { echo "FAIL inventory-count: count differs from seal" >&2; exit 4; }
-  now=$(sha256 "$recomputed"); stored=$(sha256 "$out/inventory.txt")
-  rm -f "$recomputed"
+  # Verification must work against a read-only evidence directory.
+  now=$(build_inventory "$repo" "$base" "$head" | sha256)
+  stored=$(sha256 "$out/inventory.txt")
 
   # Two different failures, named apart on purpose. The first says the stored list was
   # edited; the second says the repository moved under a list that was not.

@@ -3,16 +3,14 @@
 import argparse
 import fcntl
 import os
-import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 
-from protocol import (Rejected, require, git, digest, fields, section, axes, verdict,
-                      check_response, escape_ids, hunks, hunk_markdown, blocks, check_extra_round,
-                      protocol_sha256)
+from protocol import (Rejected, require, git, digest, hunks, hunk_markdown,
+                      protocol_sha256, review_exit, FAILED)
 import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -56,6 +54,15 @@ def main():
     if a.phase == 'path':
         print(root)
         return 0
+    if a.phase in {'report', 'hunks'}:
+        if a.phase == 'report':
+            ledger.report(root, repo)
+        else:
+            _, _, originals = ledger.audit(root, repo)
+            require(originals, 'handoff', 'no preserved original review for this PR')
+            head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
+            print(hunk_markdown(hunks(repo, originals[-1][2]['head_sha'], head)), end='')
+        return 0
     root.mkdir(parents=True, exist_ok=True)
     with (root / '.lock').open('a') as lock:
         # Non-blocking, and refuse. Waiting looks like a hang from the outside, and a second
@@ -69,22 +76,15 @@ def main():
             require(False, 'concurrent-round',
                     f'another round is already running for this PR ({root}); wait for it rather '
                     'than starting a second one, which would write into its events stream')
-        if a.phase == 'report':
-            ledger.report(root, repo)
-            return 0
         starts, ends, originals = ledger.audit(root, repo)
         head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
-        if a.phase == 'hunks':
-            require(originals, 'handoff', 'no accepted round-1 inventory for this PR')
-            print(hunk_markdown(hunks(repo, originals[-1][2]['head_sha'], head)), end='')
-            return 0
         phase = int(a.phase)
         n = len(starts) + 1
         d = root / f'round-{n:04}'
         d.mkdir()
         inputs = []
         start = {'event': 'started', 'round': n, 'phase': phase, 'head_sha': head,
-                 'repo': str(repo), 'pr': a.pr, 'expected_ids': [], 'inputs': {}}
+                 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE, 'inputs': {}}
         started = False
         executed = False
         clone = None
@@ -100,33 +100,9 @@ def main():
             start['base_sha'] = base
             require(run(['git', '-C', repo, 'merge-base', '--is-ancestor', base, head]).returncode == 0,
                     'ancestry', 'base is not an ancestor of head')
-            # Naming escapes presupposes something to escape FROM. The round number counts every
-            # attempt, including ones this harness rejected for shape; if none of them was ever
-            # accepted, round 1 has not happened yet and repeating phase 1 is not an escape.
-            # Measured: two rounds rejected by guards that were themselves wrong took the counter
-            # to 3, and the budget then demanded escape IDs from an inventory that did not exist.
-            # The gate had locked itself out of its own first round.
-            if originals and (n >= 3 or phase == 1):
-                path = os.environ.get('REVIEW_ESCAPES', '')
-                require(path, 'round-budget', 'round 3+ or scope restart requires REVIEW_ESCAPES naming original item IDs and evidence')
-                copy_input(path, d, 'ESCAPES.md')
-                inputs.append('ESCAPES.md')
-                last = max(starts)
-                prior_end = ends.get(last, {})
-                prior_file = root / f'round-{last:04}' / 'ARTIFACT.md'
-                # A preflight rejection does not erase the last review's open items.
-                prior_review = max((k for k, e in ends.items() if e.get('executed')), default=last)
-                prior_file = root / f'round-{prior_review:04}' / 'ARTIFACT.md'
-                prior_escape = prior_file.parent / 'ESCAPES.md'
-                check_extra_round((d / 'ESCAPES.md').read_text(), originals[0][3],
-                                  prior_file.read_text() if prior_file.exists() else '',
-                                  starts[prior_review]['phase'], prior_end.get('accepted', False),
-                                  head != starts[prior_review]['head_sha'],
-                                  prior_escape.read_text() if prior_escape.exists() else '')
             if phase == 2:
-                require(originals, 'handoff', 'round 2 requires an accepted sealed round-1 inventory')
+                require(originals, 'handoff', 'follow-up requires a preserved original review')
                 _, original_dir, original_start, inventory = originals[-1]
-                require(axes(inventory).get('enumeration') == 'COMPLETE', 'enumeration', 'RESTART_ROUND_1: enumeration was INCOMPLETE')
                 require(base == original_start['base_sha'], 'scope-change', 'RESTART_ROUND_1: base changed')
                 r1head = original_start['head_sha']
                 require(run(['git', '-C', repo, 'merge-base', '--is-ancestor', r1head, head]).returncode == 0,
@@ -134,29 +110,23 @@ def main():
                 start.update(round1_head_sha=r1head, inventory_sha256=digest((original_dir / 'ARTIFACT.md').read_bytes()))
                 copy_input(original_dir / 'ARTIFACT.md', d, 'ROUND1_INVENTORY.md')
                 inputs.append('ROUND1_INVENTORY.md')
+                prior = next(k for k in reversed(starts) if k >= originals[-1][0]
+                             and ends.get(k, {}).get('executed')
+                             and ledger.evidence_available(ledger.recompute(
+                                 repo, root / f'round-{k:04}', starts[k]), ends[k]))
+                start['previous_round'] = prior
+                copy_input(root / f'round-{prior:04}' / 'ARTIFACT.md', d, 'PREVIOUS_REVIEW.md')
+                inputs.append('PREVIOUS_REVIEW.md')
                 response = os.environ.get('REVIEW_RESPONSE', '')
-                require(response, 'response', 'set REVIEW_RESPONSE to the separate implementer response')
-                copy_input(response, d, 'IMPLEMENTER_RESPONSE.md')
+                if response:
+                    copy_input(response, d, 'IMPLEMENTER_RESPONSE.md')
+                else:
+                    freeze(d / 'IMPLEMENTER_RESPONSE.md', b'No implementer response supplied. Inspect the complete remediation diff.\n')
                 inputs.append('IMPLEMENTER_RESPONSE.md')
-                unrelated = check_response((d / 'IMPLEMENTER_RESPONSE.md').read_text(), inventory, repo, r1head, head, start['inventory_sha256'])
-                require(not unrelated, 'scope-change', 'RESTART_ROUND_1: unrelated changes at ' + ', '.join(unrelated))
                 freeze(d / 'REMEDIATION.patch', git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', r1head, head))
                 freeze(d / 'REMEDIATION_CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', r1head, head))
                 freeze(d / 'REMEDIATION_HUNKS.md', hunk_markdown(hunks(repo, r1head, head)).encode())
                 inputs += ['REMEDIATION.patch', 'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md']
-            else:
-                catalog = os.environ.get('REVIEW_CATALOG', '')
-                require(catalog.strip().lower() in {'', 'none'} or os.environ.get('REVIEW_EXPECTED_IDS'),
-                        'enumeration',
-                        # Name the ids the catalog actually declares, not a format hint. A caller
-                        # told only the shape sets the value it was shown and passes without
-                        # understanding why -- reported: `REVIEW_EXPECTED_IDS="P-01"` was supplied
-                        # because the message displayed P-01, not because P-01 was known to be a
-                        # class this catalog carries.
-                        'supplied catalog declares %s; set REVIEW_EXPECTED_IDS to the ones this '
-                        'inventory must instantiate'
-                        % (', '.join(re.findall(r'^P-\d+', catalog, re.M)) or 'no P-nn class'))
-                start['expected_ids'] = list(filter(None, os.environ.get('REVIEW_EXPECTED_IDS', '').split(',')))
             seal = run([SCRIPTS / 'target-seal.sh', 'seal', repo, base, head, d])
             require(seal.returncode == 0, 'target', seal.stderr.decode().strip())
             inputs += ['SEAL.txt', 'inventory.txt']
@@ -197,7 +167,7 @@ def main():
             require(run(['git', '-C', clone, 'checkout', '--quiet', '--detach', head]).returncode == 0,
                     'checkout', 'cannot check out sealed head')
             for name in inputs:
-                if name in {'SEAL.txt', 'inventory.txt', 'ESCAPES.md', 'prompt.txt'}:
+                if name in {'SEAL.txt', 'inventory.txt', 'prompt.txt'}:
                     continue
                 require(not (clone / name).exists(), 'input-collision', f'repository already contains {name}')
                 shutil.copyfile(d / name, clone / name)
@@ -209,7 +179,7 @@ def main():
             # selects another model reads as though the swap did not apply, and the swap is the
             # protocol's own remedy for a round that cannot close its artifact -- a consumer had
             # to verify by process identity that the model it asked for was the one running.
-            model = (os.environ.get('REVIEW_CODEX_MODEL', 'gpt-5.6-sol') if executor == 'codex'
+            model = (os.environ.get('REVIEW_CODEX_MODEL', 'executor default') if executor == 'codex'
                      else executor)
             print(f'review: round {n}, phase {phase}, head {head}, executor {executor} ({model})',
                   file=sys.stderr)
@@ -241,34 +211,33 @@ def main():
                     rc = subprocess.run(cmd, cwd=clone, stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env).returncode
             (d / 'executor-exit.txt').write_text(str(rc))
             (d / 'checkout-head.txt').write_bytes(git(clone, 'rev-parse', 'HEAD'))
-            marker = '# Round 1 review inventory' if phase == 1 else '# Round 2 closure review'
-            artifact = run([sys.executable, SCRIPTS / 'lib/extract.py', d / 'events.jsonl', marker])
+            artifact = run([sys.executable, SCRIPTS / 'lib/extract.py', d / 'events.jsonl', '--final'])
             freeze(d / 'ARTIFACT.md', artifact.stdout)
             checks = ledger.recompute(repo, d, start, clone)
-            accepted = all(c['ok'] for c in checks)
-            text = artifact.stdout.decode()
-            stats = ledger.statistics(text, phase)
-            end = {'event': 'finished', 'round': n, 'executed': True, 'accepted': accepted,
-                   'guards': checks, **stats,
+            recorded = all(c['ok'] for c in checks)
+            end = {'event': 'finished', 'round': n, 'executed': True, 'recorded': recorded,
+                   'guards': checks,
                    'inventory_sha256': digest(artifact.stdout) if phase == 1 else start['inventory_sha256'],
                    'outputs': ledger.hashes(d, ['ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt'])}
             ledger.append(root, end)
             for check in checks:
                 if not check['ok']:
                     print(check['reason'], file=sys.stderr)
-            print(f'review: {"ACCEPTED" if accepted else "REJECTED"} artifact {d / "ARTIFACT.md"}; verdict {verdict(text) or "unknown"}')
-            # A valid BLOCK inventory is an accepted handoff, not permission to merge.
-            fixture_chain = executor == 'stub' or any(s.get('executor') == 'stub' for s in starts.values())
-            return 0 if accepted and verdict(text) in {'PASS', 'PASS WITH NITS'} and not fixture_chain else 5
+            print(f'review: {"RECORDED" if recorded else "FAILED"} artifact {d / "ARTIFACT.md"}; '
+                  'maintainer must assess the evidence; no automatic merge approval')
+            return review_exit(recorded)
         except (Rejected, OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
             reason = str(e).replace('\n', '; ')
             if not started:
                 start['inputs'] = ledger.hashes(d, inputs)
                 ledger.append(root, start)
-            ledger.append(root, {'event': 'finished', 'round': n, 'executed': False,
-                                 'accepted': False, 'reason': reason, 'outputs': {}})
+            output_names = [name for name in ['ARTIFACT.md', 'events.jsonl', 'executor.err',
+                            'executor-exit.txt', 'checkout-head.txt'] if (d / name).is_file()]
+            ledger.append(root, {'event': 'finished', 'round': n, 'executed': executed,
+                                 'recorded': False, 'reason': reason,
+                                 'outputs': ledger.hashes(d, output_names)})
             print(reason, file=sys.stderr)
-            return 5
+            return FAILED
         finally:
             if clone:
                 shutil.rmtree(clone)

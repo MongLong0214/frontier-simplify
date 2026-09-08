@@ -16,7 +16,8 @@ for consumer in json.loads(config.read_text())['consumers']:
         prs = json.loads(subprocess.check_output(['gh', 'pr', 'list', '--state', 'open', '--json', 'number'], cwd=repo))
         for pr in prs:
             p = subprocess.run([str(runner), repo, str(pr['number']), 'auto'])
-            failed |= p.returncode != 0
+            # 10 means evidence was recorded, never that the PR may merge.
+            failed |= p.returncode not in {0, 10}
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
         print(f'dogfood: {repo}: {e}', file=sys.stderr)
         failed = True

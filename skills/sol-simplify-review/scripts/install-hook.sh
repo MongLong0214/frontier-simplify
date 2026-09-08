@@ -22,11 +22,18 @@ try:
             sys.exit('review-hook: existing hook backup already exists; resolve the two hooks before installing')
         shutil.copy2(hook, previous)
     trusted.mkdir(exist_ok=True)
-    shutil.copytree(scripts, trusted / 'scripts', dirs_exist_ok=True, ignore=shutil.ignore_patterns('__pycache__'))
-    shutil.copy2(scripts.parent / 'SKILL.md', trusted / 'SKILL.md')
+    # This directory is owned by this installer. Retired code is not part of the selected version.
+    if scripts.resolve() != (trusted / 'scripts').resolve():
+        if (trusted / 'scripts').exists():
+            shutil.rmtree(trusted / 'scripts')
+        shutil.copytree(scripts, trusted / 'scripts', ignore=shutil.ignore_patterns('__pycache__'))
+    if (scripts.parent / 'SKILL.md').resolve() != (trusted / 'SKILL.md').resolve():
+        shutil.copy2(scripts.parent / 'SKILL.md', trusted / 'SKILL.md')
     default = scripts.parents[2] / 'dogfood/consumers.json'
     if config or default.exists():
-        shutil.copy2(config or default, trusted / 'consumers.json')
+        source_config = Path(config or default)
+        if source_config.resolve() != (trusted / 'consumers.json').resolve():
+            shutil.copy2(source_config, trusted / 'consumers.json')
     driver = shlex.quote(str(trusted / 'scripts/lib/commit-check.py'))
     host = shlex.quote(str(trusted))
     before = shlex.quote(str(previous))

@@ -162,4 +162,5 @@ docs: say where acceptance is decided, because the rule as written refuses all w
 
 MIT
 
-리뷰 프로토콜 실행·오프라인 가드: [실행 가이드](skills/sol-simplify-review/README.md).
+리뷰 지원·근거 보존: [실행 가이드](skills/sol-simplify-review/README.md).
+자동 머지 승인과 두 라운드 수렴 주장은 철회했습니다. 근거는 [소비자 재검토](dogfood/REASSESSMENT.md)에 있습니다.

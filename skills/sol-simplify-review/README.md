@@ -1,131 +1,114 @@
-# Running the review protocol
+# Running a review
 
-[SKILL.md](SKILL.md) owns the prompts, statuses and verdicts. These scripts enforce the mechanical
-handoff. They need Bash, Git and Python 3.9+; live execution additionally needs the configured
-repository-capable executor. `selftest.sh` uses only local throwaway repositories and event fixtures.
+[SKILL.md](SKILL.md) owns the question-led prompts and review recommendations. The runner preserves
+execution evidence and exact Git targets. It does **not** turn a Markdown verdict into merge
+permission. Bash, Git and Python 3.9+ are required; live runs also need a repository-capable executor.
 
-## One PR, one sequence
+## One PR, preserved reviews
 
-Run these from a trusted installation outside the implementation checkout. `PR_ID` stays the same
-for every attempt, including restarts. `BASE` is a merge-base, not the target branch tip.
+Run from a trusted installation outside the implementation checkout. Keep one stable PR ID across
+attempts. BASE is the merge-base with the target branch, not its tip.
 
 ```sh
 scripts/review-round.sh 1 "$REPO" "$HEAD" "$PR_ID" "$BASE" codex
-scripts/review-round.sh hunks "$REPO" "$REMEDIATION_HEAD" "$PR_ID"
 REVIEW_RESPONSE=/host/response.md \
   scripts/review-round.sh 2 "$REPO" "$REMEDIATION_HEAD" "$PR_ID" "$BASE" claude
 scripts/review-round.sh report "$REPO" HEAD "$PR_ID"
 scripts/review-round.sh path "$REPO" HEAD "$PR_ID"
+scripts/review-round.sh hunks "$REPO" "$REMEDIATION_HEAD" "$PR_ID"
 ```
 
-The positional `1` or `2` selects the protocol phase. The actual round number is allocated under a
-per-PR lock and never supplied by the reviewer. This replaces the old per-round artifact slug.
-With no base argument, phase 1 requires `REVIEW_TARGET_BRANCH`; phase 2 inherits its sealed base.
-A local clone keeps the consumer's checkout and `.git` untouched. Tests run in that disposable clone.
-No script pushes, comments on a PR, or merges it.
+Phase 1 reviews the change. Phase 2 checks the repair, the earlier findings, any later open findings,
+and remediation regressions. Actual attempt numbers are assigned under a per-PR lock. A follow-up
+requires the same base and a descendant of the original head. For unrelated work or changed scope,
+run a new phase 1; it retains the attempt history. More than two attempts needs no escape form.
 
-`REVIEW_ARTIFACTS` selects the host evidence directory, outside the consumer checkout (default:
-`~/.sol-simplify-review`). Each PR has `ledger.jsonl` and numbered directories containing frozen
-inputs, the final reviewer message, event stream, guard results and their digests. Raw executor logs
-may contain private source or tool output; keep this directory private. Retain receipts for as long
-as the review measurements are needed; remove them when that retention is no longer useful.
+The implementer response is optional prose. When absent, the reviewer works from the complete diff
+and explains any uncertainty. Git-generated hunk IDs are navigation aids, not required mappings.
+The runner supplies the exact original review, the latest available follow-up and the full
+original-head..remediation-head diff. Reviewers must carry unresolved findings and coverage gaps.
 
-Exit 0 requires usable evidence **and** a `PASS`/`PASS WITH NITS` verdict. A BLOCK inventory is saved
-as a valid handoff but exits 5. Rejected attempts also exit 5 and print a named reason. Interrupted
-attempts remain in the ledger. `report` validates evidence without authorizing a merge.
+| Exit | Meaning |
+|---|---|
+| `10` from a review or cached review | Execution evidence recorded; read the review and make the merge decision through the existing review workflow. |
+| `5` from a review | Execution, target or evidence checks failed. |
+| Other nonzero | Invocation or environment error. |
+| `0` from `report`, `path` or `hunks` | The read-only utility completed. This is never a PR approval. |
 
-`stub` exists for offline tests. It uses the same guards, records its executor identity and always
-exits nonzero. A sequence containing a stub cannot become a live merge result.
+**Review execution never returns 0, including a PASS recommendation and every stub run.** A shell
+caller that previously used exit 0 as a merge gate must stop doing so. Do not reinterpret exit 10 as
+approval: a BLOCK, an incomplete review and an uninformative answer all share it. Execution completion
+and product safety are different questions. The existing maintainer and required product checks
+assess the evidence; there is no new approval record or alternate override path.
 
-## Remediation and extra rounds
+## Evidence and trust
 
-Use the separate Markdown response in SKILL.md. Copy the generated hunk lines into its
-`Remediation hunk accounting` section and replace the right side, for example:
+`REVIEW_ARTIFACTS` selects a host directory outside the consumer checkout, defaulting to
+`~/.sol-simplify-review`. Each attempt has frozen inputs, the exact final reviewer message in
+`ARTIFACT.md`, the event stream, process status, checks and hashes. A local disposable clone keeps the
+consumer checkout untouched. No script pushes, posts reviews or merges.
 
-```text
-- H-<generated identity> "src/reader.py" @@ <generated range> @@ — G-03, O-01
-- H-<generated identity> "src/new.py" whole-file (...) — UNRELATED: separate feature
-```
+The checks verify the target, execution completion, evidence of tool use, final-message identity
+and preserved bytes. They do not certify reading coverage, correct severity, sibling completeness
+or product truth. No prose parser counts findings or authorizes work. An uninformative final answer
+is still preserved evidence of an uninformative run, never a pass. Read the event stream if a final
+message is only a correction to earlier text; it does not restore an earlier draft as a final verdict.
 
-The identities bind the two exact heads, file and zero-context hunk bytes. A mode/binary/empty-file
-change gets a whole-file identity; renames account for both endpoints. Missing, duplicate, unknown
-and stale identities fail before invoking the closure reviewer. An unrelated declaration explains
-the hunk but requires a new phase-1 inventory. No blanket exemption is accepted.
+Legacy receipts retain their original acceptance and counts, labelled historical. Their hashes are
+checked without rewriting the ledger or reclassifying a rejection as approval. An old artifact whose
+execution/target evidence checks out can now be read by a follow-up even if its Markdown was refused.
+The original limitations remain visible. Generic legacy `inventory` errors cannot be retrospectively
+split when their leaf diagnostic was never recorded. Available leaf reasons are reported separately.
 
-List the original `file:symbol`/`file:line` sites in `applicable_siblings_checked` and the closure's
-`sites_verified`; use backticks around sites whose paths contain spaces. The guards compare listed
-sites. They cannot discover a sibling that the inventory never listed.
+Host ownership is an execution-environment responsibility. A digest proves byte equality, not
+provenance, and same-user access can rewrite the directory or disable a hook. Event checks are not
+an OS sandbox or proof of exhaustive reading. Keep raw logs private: they may contain source and
+other tool output. Newline-containing filenames remain unsupported by the line-based target seal.
 
-Round 3+ requires `REVIEW_ESCAPES=/host/escapes.md`. A phase-1 scope restart after a valid inventory
-also requires this file. Each line names an **original** inventory ID:
-
-```text
-- G-03 — OPEN — prior closure left the alternate reader OPEN; reproduction still fails
-```
-
-Allowed categories are the protocol's `OPEN`, `REMEDIATION-REGRESSION`, `ROUND1-ESCAPE`, `SCOPE-CHANGE`
-and `INTEGRITY`. OPEN must occur in the prior closure, ROUND1-ESCAPE in its escape section, INTEGRITY
-must follow a rejected attempt; a changed head or recorded regression/scope change supports the
-other categories. An incidental missed obligation is linked to the original class/obligation whose
-sweep failed, not assigned a fictional new round-1 ID. Closure `Protocol escapes` entries likewise
-name that ID alongside their category and evidence.
-
-The report distinguishes `ROUND1-ESCAPE rate` (distinct original IDs implicated in incidental missed
-blockers / original inventory item count) from `closure escape rate` (distinct IDs explaining extra
-executed rounds / that same denominator). It prints reasons and all attempts, including guards that
-prevented execution. This is an item-level diagnostic; it cannot measure defects nobody found.
-
-## Host inputs and trust
+## Host inputs and consumers
 
 `REVIEW_REQUIREMENTS`, `REVIEW_ROUTED`, `REVIEW_CATALOG`, `REVIEW_SUITE_STATUS` and `REVIEW_TOOL_NOTES`
-fill the existing prompt placeholders. `REVIEW_EXPECTED_IDS` is a comma-separated list of host-known
-obligation/project IDs. A supplied catalog requires it; all G-01 through G-10 are always required.
-`REVIEW_EXECUTOR` selects an executor when the positional argument is absent. Optional
-`REVIEW_CODEX_MODEL` configures that executor; there is no model default in the skill.
+fill prompt inputs. `REVIEW_EXECUTOR` selects codex or claude; `REVIEW_CODEX_MODEL` optionally selects
+the model. Without an explicit base, phase 1 needs `REVIEW_TARGET_BRANCH`; phase 2 inherits its base.
+`REVIEW_RESPONSE` optionally names the implementer's separate response.
 
-The old `REVIEW_INTEGRITY`, `REVIEW_INVENTORY_SHA256` and `REVIEW_ROUND1_HEAD` assertions are no longer
-inputs. Phase 2 derives them from this PR's sealed artifacts and checks ancestry before model work.
-Ordinary tests/suite/platform claims and semantic evidence still need independent reviewer judgment.
-The unchanged prompts have a known tension: round-1 PASS wording both excludes and permits explicitly
-carried UNVERIFIED items. The harness follows the prompt's two coverage axes and does not silently
-resolve that product-verdict ambiguity. Phase-2 PASS cannot silently carry an unclosed item.
+`REVIEW_EXPECTED_IDS` and `REVIEW_ESCAPES` no longer impose obligations. Automatically harvested
+catalog candidates are attributed leads from the current PR, including rejected reviews. Repetition
+and a reviewer's assertion of recurrence never promote a mandatory class. Explicit host catalogs
+remain usable inputs, and findings must be checked against current code.
 
-A digest proves byte equality, not authorship. The host directory, installed runner and installed
-hook must be protected from the implementation/reviewer actor by the execution environment. Event
-checks detect common seal access and record actual tool envelopes; they do not prove exhaustive
-reading or provide an OS sandbox. Same-user filesystem access can rewrite an entire history, including
-its digests, or disable a Git hook. Do not treat the hash chain as a signature or a remote merge gate.
-Audit reruns the installed guards; a later guard version can reject older receipts. It does not
-silently rewrite those receipts into approvals. Newline-containing filenames are rejected explicitly
-because the protocol's line-based Markdown file accounting cannot represent them.
+```sh
+scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto
+```
 
-## Offline commit check and consumer PRs
+The adapter resolves exact PR commits with `gh`, fetches them into a host clone and invokes the
+runner. Auto mode reviews each head once and routes changed heads to follow-up when an original
+review is available. Explicit `1` or `2` can retry. Cached results have the same nonapproval status.
+It does not decide whether the PR has merged or whether the review caused a fix.
+
+Consumer configuration lives outside the portable skill. `REVIEW_CONSUMERS_CONFIG` names a JSON
+file of consumer repositories and optional portability markers. The maintainer's `dogfood/` command
+can discover open PRs through an existing scheduler. Registration alone neither installs a scheduler
+nor wires a remote required check.
+
+## Offline verification and hook
 
 ```sh
 scripts/selftest.sh
 scripts/install-hook.sh "$SKILL_REPOSITORY"
-scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto
 ```
 
-The installer preserves an existing pre-commit hook. Its installed copy runs against a single staged
-Git tree, then runs the staged selftest. Candidate test edits cannot replace the installed failure
-witnesses; the hook does not read a stored pass flag. To adopt changed test expectations, deliberately
-reinstall from a maintainer-selected version. Remove the hook when this repository no longer maintains
-the review skill (restore `pre-commit.before-review` if present).
+The hook tests one staged tree with the installed tests and the staged tests. It preserves an
+existing hook and ignores unrelated changes. Installed failure witnesses prevent a candidate from
+passing merely by deleting its tests. They cannot prove that the installed protocol itself is right.
+When deliberately replacing protocol semantics, select and test the new version, then reinstall the
+hook from that version so retired contract tests do not pin the old design forever. This is a local
+installation change, not a release or a push.
 
-`review-pr.sh` uses `gh` to resolve the PR number and exact commits, fetches into a persistent host
-clone and calls `review-round.sh`. `auto` runs phase 1 on first observation, then phase 2 on a changed
-head; it reports an already-attempted head without spending another model call. Explicit `1`/`2`
-can retry a head, with the same round budget. Supply `REVIEW_RESPONSE` and `REVIEW_ESCAPES` normally,
-or place `pr-N-response.md` and `pr-N-escapes.md` in the printed consumer host directory.
+Tests cover failed execution, altered artifacts, commit/ancestry mismatches, prose handoff, later
+open findings, cached status and the absence of an automatic approval path. They do not measure
+reviewer recall or safe merge completion. The [reassessment](../../dogfood/REASSESSMENT.md) explains
+why the Markdown gates and their tests were retired.
 
-A host scheduler or the consumer's existing PR workflow must invoke this entrypoint and use its exit
-status. Scheduling and remote required-check settings are external to the skill. Keep consumer
-configuration outside this directory. `REVIEW_CONSUMERS_CONFIG` names a host JSON file containing
-`consumers` entries with `repository` and optional `markers`; the portability check scans every file
-under the skill for those identities. The maintainer repository's `dogfood/` directory supplies its
-own configuration and scheduler command. Installing a local hook alone does not create a remote
-required PR check.
-
-`sol-simplify-audit` measures repository-wide manufactured process and proposes deletions. This
-protocol reviews one PR for product defects. No measurement or deletion logic is shared with audit.
+`sol-simplify: keep the hook while maintaining this runner; remove it when the runner is no longer
+maintained here, restoring pre-commit.before-review if present.`

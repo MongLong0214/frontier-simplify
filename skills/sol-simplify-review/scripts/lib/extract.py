@@ -32,6 +32,14 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     if o.get("type") == "result" and isinstance(o.get("result"), str):
         texts.append(o["result"])
 
+# New reviews preserve the final message verbatim, including its Markdown and limitations.
+# Marker extraction remains only to verify the exact bytes of historical receipts.
+if marker == "--final":
+    if not texts or not texts[-1].strip():
+        sys.exit("extract: no nonempty final reviewer message")
+    sys.stdout.write(texts[-1])
+    sys.exit(0)
+
 # A reviewer that emits the inventory and then appends a correction has amended its own artifact.
 # Taking the earlier message would seal something its author has already revised -- worse than
 # refusing, because the seal would bind a version the reviewer withdrew. So the artifact must be the
