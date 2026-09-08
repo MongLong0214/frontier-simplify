@@ -524,4 +524,18 @@ PARTIAL verification. Do not claim *verified* two-round convergence when:
 - The implementer does not answer every failing item and changed hunk.
 - The requirement itself is incompatible with the chosen architecture.
 
+`enumeration: COMPLETE` is the reviewer's claim about its own coverage, and it is not a
+guarantee that a second reviewer on the same head would produce the same inventory. Measured on
+one PR: two round-1 runs at one sealed head, neither carrying a catalog, produced 19 items and
+14 items, and **each reproduced a real blocker the other did not raise** -- one an unchecked
+acquisition in two of three callers, the other a census whose file list omitted the authority
+under review. Both were confirmed in the code.
+
+That does not void the protocol; a bounded surface reviewed once still beats an unbounded
+surface reviewed five times, which is what this replaces. It bounds what COMPLETE buys: a
+finished sweep of the classes the reviewer instantiated, not proof that no other reviewer would
+instantiate another. Where a change is small enough to re-seal cheaply, a second independent
+round-1 is worth its cost; where it is not, say plainly that the promise rests on one
+enumeration. n=2, reported by a consumer, and worth more observations.
+
 In those cases, say which condition failed in the existing PR round receipts. Do not create a second ledger or exception process.

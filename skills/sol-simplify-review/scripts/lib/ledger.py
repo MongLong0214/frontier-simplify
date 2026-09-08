@@ -252,12 +252,19 @@ def guard_rejections(ends):
 def report(root, repo):
     starts, ends, originals = audit(root, repo)
     print('round phase head inventory items FAIL guards verdict')
+    print('  (a ? marks counts taken from an artifact the guards refused: read the artifact, not the number)')
     escaped = set()
     escape_rates = {digest((o[1] / 'ARTIFACT.md').read_bytes()): (set(), len(blocks(o[3], 'Inventory'))) for o in originals}
     for n, s in starts.items():
         e = ends.get(n, {})
         invsha = s.get('inventory_sha256') or e.get('inventory_sha256') or '-'
-        print(n, s['phase'], s['head_sha'], invsha, e.get('item_count', '-'), e.get('fail_count', '-'),
+        # Counts from a REJECTED round are marked. They were derived from an artifact the guards
+        # refused, by whatever parser ran at the time, and printing them bare invites the reading
+        # that cost a reader an hour: a round showing `0` FAIL against an artifact carrying a
+        # reproduced BLOCKER, read as "the first round found nothing".
+        mark = '' if e.get('accepted') else '?'
+        print(n, s['phase'], s['head_sha'], invsha,
+              f"{e.get('item_count', '-')}{mark}", f"{e.get('fail_count', '-')}{mark}",
               'PASS' if e.get('accepted') else 'REJECTED' if e else 'INTERRUPTED', e.get('verdict') or '-')
         d = root / f'round-{n:04}'
         if e.get('executed') and e.get('accepted') and s['phase'] == 2 and originals:
