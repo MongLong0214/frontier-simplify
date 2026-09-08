@@ -48,6 +48,18 @@ def main():
     # building its own checkout, and a less careful reviewer would have reviewed the base.
     # The reviewer's own cwd is the correct disposable checkout; the prompt gets the identity.
     os.environ['REVIEW_REPOSITORY_NAME'] = origin
+    # The project's own rounds are its catalog. SKILL.md asks every item for a
+    # `catalog_candidate` and states when one earns a standing entry; nothing collected them,
+    # so nine rounds on one PR emitted thirty-eight candidates -- one of which said in its own
+    # words "this is the third time" and named the three sites -- while every round after the
+    # first began from `none` and rediscovered the class at a new site. Harvesting them is what
+    # makes using this protocol improve it, rather than only improving what it is pointed at.
+    # An explicit REVIEW_CATALOG still wins: the host may always override what it feeds back.
+    if not os.environ.get('REVIEW_CATALOG'):
+        harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
+                                    str(host / str(a.pr))], capture_output=True, text=True)
+        if harvested.returncode == 0 and harvested.stdout.strip() not in ('', 'none'):
+            os.environ['REVIEW_CATALOG'] = harvested.stdout
     argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
     print(f'review-pr: consumer host {host}', file=sys.stderr)
     if a.phase == 'auto':

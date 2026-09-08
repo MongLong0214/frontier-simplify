@@ -1,5 +1,6 @@
 """Append-only host receipts. Audit recomputes guards; stored acceptance is never authority."""
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -226,6 +227,28 @@ def section_closure(text):
 
 
 
+def guard_rejections(ends):
+    """How often each guard has refused a round on this PR.
+
+    A guard that refuses many rounds is either finding a real pattern or is itself the
+    defect, and the difference is invisible while each refusal is met one at a time.
+    Measured: eighteen harness faults in one day, every one found by a refusal and fixed by
+    hand, and nothing recorded that the same three guards had done the refusing. Counting
+    them does not decide which case it is -- it puts the question in front of whoever reads
+    the report, at the moment the count is what makes it askable.
+    """
+    tally = {}
+    for e in ends.values():
+        for check in e.get('guards') or []:
+            if not check.get('ok'):
+                tally[check['guard']] = tally.get(check['guard'], 0) + 1
+        reason = e.get('reason') or ''
+        m = re.search(r'GUARD FAIL \[([a-z0-9-]+)\]', reason)
+        if m:
+            tally[m[1]] = tally.get(m[1], 0) + 1
+    return dict(sorted(tally.items(), key=lambda kv: -kv[1]))
+
+
 def report(root, repo):
     starts, ends, originals = audit(root, repo)
     print('round phase head inventory items FAIL guards verdict')
@@ -260,5 +283,13 @@ def report(root, repo):
         print(f'closure escape rate: {len(escaped)}/{denominator} original items ({100 * len(escaped) / denominator:.1f}%)')
     else:
         print('closure escape rate: unknown (no accepted round-1 inventory)')
+    tally = guard_rejections(ends)
+    if tally:
+        print('guard refusals on this PR: ' + ', '.join(f'{g} x{c}' for g, c in tally.items()))
+        repeated = [g for g, c in tally.items() if c >= 3]
+        if repeated:
+            print('  refused 3+ rounds: ' + ', '.join(repeated)
+                  + ' -- either a real pattern in the change, or the guard is the defect. '
+                    'Nothing here decides which; read the refused artifacts before the next round.')
     print('The rate includes named causes of extra rounds; ROUND1-ESCAPE is reported separately in the evidence.')
     return starts, ends

@@ -206,6 +206,29 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     # same way a reviewer writes anything else -- the value in bold, then the reasoning on the same
     # line. A complete inventory carrying three reproduced blockers was rejected for reporting
     # neither axis while both were there.
+    # Using the protocol must improve the protocol, not only what it is pointed at. Candidates
+    # recur in substance and not in wording -- nine rounds described one shape in nine sentences --
+    # so promotion rests on the reviewer stating the recurrence, or on the same wording appearing
+    # in two rounds. A candidate raised once is a lead and must not become a standing rule.
+    import importlib.util as _il
+    _cs = _il.spec_from_file_location('catalog', SCRIPTS / 'lib/catalog.py')
+    catalog = _il.module_from_spec(_cs); _cs.loader.exec_module(catalog)
+    cat_root = t / 'catalogs'
+    def seed(round_name, candidate):
+        d = cat_root / round_name; d.mkdir(parents=True, exist_ok=True)
+        (d / 'ARTIFACT.md').write_text('## Inventory\n### G-01 — x\n- catalog_candidate: %s\n' % candidate)
+    seed('round-0001', 'a lock nobody can clear becomes a permanent gate')
+    check('catalog-single-mention-is-a-lead', True,
+          lambda: 'Standing project classes' not in catalog.render(catalog.harvest(cat_root), 2))
+    seed('round-0002', 'a lock nobody can clear becomes a permanent gate')
+    check('catalog-two-rounds-promote', True,
+          lambda: 'raised independently in 2 rounds' in catalog.render(catalog.harvest(cat_root), 2))
+    seed('round-0003', 'a stored decision re-derived at read time -- recurs whenever the inputs move')
+    check('catalog-stated-recurrence-promotes', True,
+          lambda: 'the reviewer stated the recurrence itself' in catalog.render(catalog.harvest(cat_root), 2))
+    seed('round-0004', 'none')
+    check('catalog-none-is-not-a-class', True,
+          lambda: 'none' not in [c.lower() for c, _ in catalog.harvest(cat_root).values()])
     check('axes-through-markup', True, lambda: ci(inv
         .replace('- enumeration: COMPLETE', '- enumeration: **COMPLETE.** every changed file was read')
         .replace('- verification: COMPLETE', '- verification: **COMPLETE.** nothing is UNVERIFIED')))
