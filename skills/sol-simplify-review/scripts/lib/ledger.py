@@ -157,14 +157,28 @@ def audit(root, repo):
             # The artifact bytes stay bound either way: outputs are hashed at finish and verified
             # above, so substituting a round's contents is still caught. What is dropped here is
             # only the claim that today's guards agree with yesterday's.
-            if start.get('skill_sha256') == protocol_sha256(SCRIPTS):
+            # Two of this function's checks RECOMPUTE something and compare it to what the
+            # receipt recorded: the guard results, and the counts derived from the artifact. Both
+            # only speak for the code that produced the receipt. Correcting a parser changes what
+            # today's code derives from yesterday's bytes, so across a protocol version a
+            # difference is the correction, not a forgery -- and treating it as one condemns every
+            # earlier round, whose only remedy is deleting the ledger and with it the round history
+            # it exists to keep. Scoping the guard check alone left this one open and the next
+            # round hit it, which is why they now sit together under one flag: a third
+            # recomputation belongs here, beside its siblings.
+            #
+            # Nothing that rests on BYTES moves: the receipt chain, the artifact digest, the
+            # handoff binding and the receipt's own internal consistency are checked either way.
+            same_protocol = start.get('skill_sha256') == protocol_sha256(SCRIPTS)
+            if same_protocol:
                 require(checks == historical, 'ledger-guards', f'round {n}: recomputed guards differ')
             else:
                 require(end['accepted'] == all(c['ok'] for c in historical), 'ledger-guards',
                         f'round {n}: acceptance does not follow from its own recorded guards')
             text = (d / 'ARTIFACT.md').read_text()
             stats = statistics(text, start['phase'])
-            require(all(end[k] == v for k, v in stats.items()), 'ledger-counts', f'round {n}: counts differ from artifact')
+            require(not same_protocol or all(end[k] == v for k, v in stats.items()),
+                    'ledger-counts', f'round {n}: counts differ from artifact')
             expected_inventory = digest((d / 'ARTIFACT.md').read_bytes()) if start['phase'] == 1 else start['inventory_sha256']
             require(end['inventory_sha256'] == expected_inventory, 'ledger-digest', f'round {n}: inventory digest differs')
             require(end['accepted'] == all(c['ok'] for c in end['guards']), 'ledger-guards', f'round {n}: forged acceptance')

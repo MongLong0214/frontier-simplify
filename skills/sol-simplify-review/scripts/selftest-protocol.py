@@ -381,6 +381,11 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
             record['skill_sha256'] = '0' * 64
         if record.get('event') == 'finished' and record.get('guards'):
             record['guards'] = record['guards'] + [{'guard': 'retired-check', 'ok': True}]
+            # Counts are the other thing audit recomputes, and a corrected parser derives different
+            # ones from the same bytes. Scoping only the guard check left this sibling open and the
+            # next round hit it; both move together now.
+            if 'fail_count' in record:
+                record['fail_count'] = record['fail_count'] + 7
     ledger_path.unlink()
     for record in records:
         ledger.append(root, record)
@@ -407,6 +412,16 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     for record in records:
         ledger.append(root, record)
     check('ledger-other-version-still-checks-itself', False, lambda: ledger.audit(root, repo))
+    # Same version, different counts: still a forged receipt.
+    ledger_path.write_bytes(saved_ledger)
+    records = ledger.read(root)
+    for record in records:
+        if record.get('event') == 'finished' and 'fail_count' in record:
+            record['fail_count'] = record['fail_count'] + 7
+    ledger_path.unlink()
+    for record in records:
+        ledger.append(root, record)
+    check('ledger-same-version-counts-checked', False, lambda: ledger.audit(root, repo))
     ledger_path.write_bytes(saved_ledger)
     events(t / 'events', inv)
     host('1', h1, '18')
