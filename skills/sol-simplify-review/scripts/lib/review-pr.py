@@ -67,7 +67,13 @@ def main():
         if ledger_root.returncode == 0 and ledger_root.stdout.strip():
             harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
                                         ledger_root.stdout.strip()], capture_output=True, text=True)
-            if harvested.returncode == 0 and harvested.stdout.strip() not in ('', 'none'):
+            ids = re.findall(r'^P-\d+', harvested.stdout, re.M)
+            # Only a catalog with standing classes is worth supplying. The renderer also prints
+            # candidates "raised once, not yet standing", and handing those over as a catalog made
+            # the runner demand ids for classes that do not exist: the run said it had carried
+            # forward nothing and then refused for a missing P-01 in the same breath. Leads are
+            # not obligations, which is what the renderer says about them.
+            if harvested.returncode == 0 and ids:
                 os.environ['REVIEW_CATALOG'] = harvested.stdout
                 # A supplied catalog is only supplied if the inventory has to answer for it. The
                 # runner checks that every declared class was instantiated, and it learns which
@@ -75,11 +81,14 @@ def main():
                 # the classes optional, which is the same as not carrying them. Derived from the
                 # rendered catalog rather than tracked beside it: two lists of the same thing is
                 # how one goes stale.
-                ids = re.findall(r'^P-\d+', harvested.stdout, re.M)
-                if ids and not os.environ.get('REVIEW_EXPECTED_IDS'):
+                if not os.environ.get('REVIEW_EXPECTED_IDS'):
                     os.environ['REVIEW_EXPECTED_IDS'] = ','.join(ids)
-                print('review-pr: catalog carried forward from %d earlier round(s): %s'
-                      % (len(ids), ', '.join(ids)), file=sys.stderr)
+                # Count the classes as classes and the rounds as rounds. Printing one number
+                # under the other's name is how "carried forward from 0" appeared above a refusal
+                # that named a class.
+                seen = len(list(Path(ledger_root.stdout.strip()).glob('round-*/ARTIFACT.md')))
+                print('review-pr: %d standing class(es) carried forward from %d round(s): %s'
+                      % (len(ids), seen, ', '.join(ids)), file=sys.stderr)
     argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
     print(f'review-pr: consumer host {host}', file=sys.stderr)
     if a.phase == 'auto':

@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -144,8 +145,17 @@ def main():
                 freeze(d / 'REMEDIATION_HUNKS.md', hunk_markdown(hunks(repo, r1head, head)).encode())
                 inputs += ['REMEDIATION.patch', 'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md']
             else:
-                require(os.environ.get('REVIEW_CATALOG', '').strip().lower() in {'', 'none'} or os.environ.get('REVIEW_EXPECTED_IDS'),
-                        'enumeration', 'supplied catalog needs REVIEW_EXPECTED_IDS (P-01,...)')
+                catalog = os.environ.get('REVIEW_CATALOG', '')
+                require(catalog.strip().lower() in {'', 'none'} or os.environ.get('REVIEW_EXPECTED_IDS'),
+                        'enumeration',
+                        # Name the ids the catalog actually declares, not a format hint. A caller
+                        # told only the shape sets the value it was shown and passes without
+                        # understanding why -- reported: `REVIEW_EXPECTED_IDS="P-01"` was supplied
+                        # because the message displayed P-01, not because P-01 was known to be a
+                        # class this catalog carries.
+                        'supplied catalog declares %s; set REVIEW_EXPECTED_IDS to the ones this '
+                        'inventory must instantiate'
+                        % (', '.join(re.findall(r'^P-\d+', catalog, re.M)) or 'no P-nn class'))
                 start['expected_ids'] = list(filter(None, os.environ.get('REVIEW_EXPECTED_IDS', '').split(',')))
             seal = run([SCRIPTS / 'target-seal.sh', 'seal', repo, base, head, d])
             require(seal.returncode == 0, 'target', seal.stderr.decode().strip())
