@@ -245,6 +245,14 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
         '- `a.txt` \u2192 `b.txt` — READ')))
     check('accounting-reason-mention-not-counted', False, lambda: ci(inv.replace(
         '- b.txt — READ', '- a.txt — READ_DIFF_ONLY — also looked at b.txt')))
+    # A field name may carry a parenthetical saying how the value was gathered. Reported: an
+    # item was refused for having no applicable_sites while the field and seven probed sites
+    # were both right there. A conflicting restatement is still refused, parenthetical or not.
+    check('field-with-parenthetical-read', True, lambda: ci(inv.replace(
+        '- class_sweep: searched both reader definitions and callers',
+        '- class_sweep (each caller probed individually): searched both reader definitions and callers')))
+    check('field-with-parenthetical-still-conflicts', False, lambda: ci(inv.replace(
+        '- scope: COMPLETE', '- scope (checked twice): COMPLETE\n- scope: INCOMPLETE')))
     check('identical-restatement-accepted', True, lambda: ci(inv.replace('- scope: COMPLETE', '- scope: COMPLETE\n- scope: COMPLETE')))
     check('enumeration-missing-default', False, lambda: ci(inv.replace('### G-10', '### P-10')))
     check('enumeration-missing-project-class', False, lambda: ci(inv, ['P-01']))

@@ -126,7 +126,11 @@ def accounting(text):
 def fields(text):
     out, key = {}, None
     for line in text.splitlines():
-        m = re.match(r'^[-*] ([A-Za-z_][A-Za-z0-9_ ]*):[ \t]*(.*)$', line)
+        # A field name may carry a parenthetical before its colon -- "applicable_sites (all
+        # seven operands, each individually probed):" names the field and says how it was
+        # gathered. Refusing that reads as "the field is missing" while the field and its value
+        # are both there, which is the same shape as the backticked sha and the emphasised axis.
+        m = re.match(r'^[-*] ([A-Za-z_][A-Za-z0-9_ ]*?)\s*(?:\([^)]*\))?\s*:[ \t]*(.*)$', line)
         if m:
             key = m[1].lower()
             value = m[2].strip()
