@@ -89,7 +89,14 @@ def render(found, min_rounds):
                    'type, because a rule reaches the sites someone remembers to look at and a type '
                    'reaches all of them. As that reviewer put it, the compiler is not a site. Prefer '
                    'that form of closure where the change is available, and say plainly when it is '
-                   'not and a rule is the best that can be had.\n')
+                   'not and a rule is the best that can be had.\n'
+                   '\nA test for whether a closure is strong enough: if it reads \"apply this rule '
+                   'at every site\", the class is not closed -- that closure has to be re-applied by '
+                   'whoever writes the next site, which is the same reach gap in a new place. A '
+                   'consumer traced its recurrence to one function doing both adjudication and '
+                   'cleanup, so a read path was a write path and a test observing it created the '
+                   'condition it then asserted; the rule it had been re-applying per site was the '
+                   'symptom of that, and splitting the two leaves one site instead of a rule.\n')
         for i, (_, (verbatim, rounds)) in enumerate(sorted(standing.items(), key=lambda kv: -len(kv[1][1])), 1):
             out.append('P-%02d — %s\n      (%s)\n' % (i, verbatim, basis(verbatim, rounds)))
     if once:
