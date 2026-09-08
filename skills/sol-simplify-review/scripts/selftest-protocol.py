@@ -290,6 +290,13 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
           lambda: (rejected(h1, '31').returncode != 0 and rejected(h1, '31').returncode != 0
                    and 'round-budget' not in cmd(SCRIPTS / 'review-round.sh', '1', repo, h1, '31',
                                                  base, 'stub', env=env).stderr))
+    # The same rule lives twice: once before a round runs, once when the ledger is audited. Fixing
+    # only the first left the second refusing every audit of a chain whose early rounds were all
+    # rejected -- a class-local repair, in the harness built to stop them.
+    rejected_root = Path(cmd(SCRIPTS / 'review-round.sh', 'path', repo, h1, '31', base,
+                             'stub', env=env).stdout.strip())
+    check('audit-of-rejected-rounds-is-not-a-budget-error', True,
+          lambda: bool(ledger.audit(rejected_root, repo)))
     r1 = host('1', h1)
     root = Path(host('path', h1).stdout.strip())
     check('host-block-exits-nonzero', True, lambda: r1.returncode != 0)

@@ -136,6 +136,7 @@ def audit(root, repo):
             require(start['inventory_sha256'] == digest((original[1] / 'ARTIFACT.md').read_bytes()) and
                     start['round1_head_sha'] == original[2]['head_sha'] and
                     start['base_sha'] == original[2]['base_sha'], 'ledger-handoff', f'round {n}: handoff substituted')
+        pending_original = None
         if end:
             verify_hashes(d, end['outputs'])
         if end and end['executed']:
@@ -168,9 +169,16 @@ def audit(root, repo):
             require(end['inventory_sha256'] == expected_inventory, 'ledger-digest', f'round {n}: inventory digest differs')
             require(end['accepted'] == all(c['ok'] for c in end['guards']), 'ledger-guards', f'round {n}: forged acceptance')
             if start['phase'] == 1 and end['accepted']:
-                originals.append((n, d, start, text))
-        if start['round'] >= 3 and end and end['executed']:
-            require(originals, 'round-budget', 'no sealed round-1 inventory')
+                # After the budget check below, never before it. A round is not its own prior
+                # inventory: appending first makes an accepted round 3 demand a list of the items
+                # that escaped from itself.
+                pending_original = (n, d, start, text)
+        # The sibling of the same rule in run-review.py, and it was left open when that one was
+        # fixed -- the exact class-local repair this protocol exists to prevent, committed by its
+        # own harness. Escapes presuppose an accepted inventory to escape FROM; where none of the
+        # earlier attempts was accepted, round 1 has not happened yet and later attempts are it
+        # happening again, not escapes from it.
+        if originals and start['round'] >= 3 and end and end['executed']:
             first = originals[0]
             prior_review = max((k for k, e in ends.items() if k < n and e.get('executed')), default=n - 1)
             prior_file = root / f'round-{prior_review:04}' / 'ARTIFACT.md'
@@ -180,6 +188,9 @@ def audit(root, repo):
                               ends.get(n - 1, {}).get('accepted', False),
                               start['head_sha'] != starts[prior_review]['head_sha'],
                               prior_escape.read_text() if prior_escape.exists() else '')
+        if pending_original is not None:
+            originals.append(pending_original)
+            pending_original = None
     return starts, ends, originals
 
 
