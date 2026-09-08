@@ -469,8 +469,13 @@ stopped before `## Verdict`; another produced 82 items with `class_sweep` absent
 them and no Verdict section at all. Both were refused by the guards, correctly: an artifact missing
 the field that records the sweep has not recorded a sweep.
 
-"The model was too small" and "the change is too large for one bounded review" produce that same
-symptom and take different fixes, so distinguish them before choosing. Re-run with a stronger
+The two are told apart by the item count, not by the missing fields. A model that cannot see the
+sites produces FEWER items; a round that ran out of room produces MORE and reports less about each
+-- measured, 51 items then 82, the second losing every field and then its tail. It enumerated
+harder and recorded less, which is a budget shape and not a comprehension one.
+
+"The model was too small" and "the change is too large for one bounded review" produce the same
+missing sections and take different fixes, so read the counts before choosing. Re-run with a stronger
 executor first -- the protocol is built to swap the model inside it. If a stronger executor still
 cannot close the artifact, the change exceeds a single bounded review and the answer is to split
 it, not to buy more rounds.

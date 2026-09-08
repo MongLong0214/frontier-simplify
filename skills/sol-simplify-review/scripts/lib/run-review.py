@@ -195,7 +195,14 @@ def main():
             executor = start['executor']
             prompt = (d / 'prompt.txt').read_text()
             env = {k: v for k, v in os.environ.items() if not k.startswith('REVIEW_')}
-            print(f'review: round {n}, phase {phase}, head {head}, executor {executor}', file=sys.stderr)
+            # Name the model, not only the executor. `executor codex` while REVIEW_CODEX_MODEL
+            # selects another model reads as though the swap did not apply, and the swap is the
+            # protocol's own remedy for a round that cannot close its artifact -- a consumer had
+            # to verify by process identity that the model it asked for was the one running.
+            model = (os.environ.get('REVIEW_CODEX_MODEL', 'gpt-5.6-sol') if executor == 'codex'
+                     else executor)
+            print(f'review: round {n}, phase {phase}, head {head}, executor {executor} ({model})',
+                  file=sys.stderr)
             executed = True
             if executor == 'stub':
                 # Same guards and receipt, but never an eligible merge result.
