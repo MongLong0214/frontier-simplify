@@ -18,6 +18,13 @@
         "repo-factory",
         "repofactory"
       ]
+    },
+    {
+      "repository": "/Users/isaac/projects/logic-pro-mcp",
+      "markers": [
+        "logic-pro-mcp",
+        "logicpromcp"
+      ]
     }
   ]
 }
