@@ -133,6 +133,27 @@ read = set(d.get("filesRead") or []) | set(d.get("filesReadDiffOnly") or [])
 notread = set(d.get("notRead") or [])
 target = {l.split("  ", 1)[1] for l in open(seal + "/inventory.txt").read().splitlines() if l.strip()}
 bad = []
+
+
+def resolve(path):
+    """Expand a reviewer's elided path against the sealed list, or leave it to fail.
+
+    Reviewers write the second half of a rename as `...v2.schema.json`, and did so in two of
+    four rounds on one PR. Read literally that is a file that does not exist, so the round is
+    rejected twice over: once as a fabricated path and once for the real file left unaccounted.
+    Resolving it is not guessing -- the sealed list is fixed before the reviewer exists, and the
+    suffix is expanded only when exactly one sealed path ends with it. Two matches, or none, stay
+    unresolved and fail as they did before.
+    """
+    if not path.startswith(("...", "\u2026")):
+        return path
+    suffix = path.lstrip(".\u2026")
+    hits = [t for t in target if t.endswith(suffix)]
+    return hits[0] if len(hits) == 1 else path
+
+
+read = {resolve(p) for p in read}
+notread = {resolve(p) for p in notread}
 if not read:
     bad.append("coverage-empty: no file is accounted READ -- nothing was opened")
 # The harness hands the reviewer these two. They are inputs, not claims about repository

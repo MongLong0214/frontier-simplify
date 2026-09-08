@@ -189,6 +189,23 @@ mkinv "$T/inv-diffonly.md" "- a.txt — READ — changed
 - b.txt — READ_DIFF_ONLY — one-hunk test change" "$GOODITEM" "$GOODV"
 ck coverage-read-diff-only ok   acct "$T/inv-diffonly.md"
 
+# Reviewers write the far side of a rename as `...new.txt`, and did so in two of four rounds on
+# one PR. Read literally that is a file that does not exist, so the round is rejected twice: once
+# as a fabricated path, once for the real file left silent. It resolves only when exactly one
+# sealed path ends with the suffix -- the sealed list is fixed before the reviewer exists, so that
+# is arithmetic, not charity. An ambiguous suffix must still fail, or the shorthand becomes a way
+# to claim a file without naming it.
+mkinv "$T/inv-elided.md" "- a.txt — READ — changed
+- \`a.txt\` \u2192 \`...b.txt\` — READ — renamed" "$GOODITEM" "$GOODV"
+ck coverage-elided-unique-resolves ok acct "$T/inv-elided.md"
+mkinv "$T/inv-elided-ambiguous.md" "- a.txt — READ — changed
+- \`...txt\` — READ — matches both sealed files" "$GOODITEM" "$GOODV"
+ck coverage-elided-ambiguous-fails fail acct "$T/inv-elided-ambiguous.md"
+mkinv "$T/inv-elided-nomatch.md" "- a.txt — READ — changed
+- b.txt — READ — changed
+- \`...nowhere.mjs\` — READ — no sealed path ends with this" "$GOODITEM" "$GOODV"
+ck coverage-elided-nomatch-fails fail acct "$T/inv-elided-nomatch.md"
+
 # --- shape ---------------------------------------------------------------------------------
 printf 'The change looks fine to me.\n' > "$T/prose.md"
 ck shape-prose-rejected    fail guard_inventory_shape "$T/prose.md" 1
