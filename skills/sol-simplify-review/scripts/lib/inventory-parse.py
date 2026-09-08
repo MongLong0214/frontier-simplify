@@ -23,7 +23,7 @@ ROUND2_SECTIONS = ["# Round 2 closure review", "## Binding", "## Closure", "## V
 # "- <path> — READ | READ_DIFF_ONLY | NOT_READ — <role>". Em dash is what SKILL.md
 # prints; a reviewer typing a hyphen instead is following the shape, not breaking it,
 # so both separate.
-ACCT = re.compile(r"^\s*[-*]\s+(?:`)?([^`\s—|]+)(?:`)?\s*(?:—|--|–)\s*"
+ACCT = re.compile(r"^\s*[-*]\s+(?:`)?([^`\n—|]+?)(?:`)?[ \t]*(?:—|--|–)[ \t]*"
                   r"(READ_DIFF_ONLY|NOT_READ|READ)\b", re.M)
 
 
@@ -40,10 +40,27 @@ def accounting(text):
     out = {"filesRead": [], "filesReadDiffOnly": [], "notRead": []}
     key = {"READ": "filesRead", "READ_DIFF_ONLY": "filesReadDiffOnly", "NOT_READ": "notRead"}
     for path, status in ACCT.findall(body):
+        path = path.strip()
         # The template line itself is not a claim about a file.
         if path.startswith("<"):
             continue
         out[key[status]].append(path)
+    return out
+
+
+def fields(text):
+    out, key = {}, None
+    for line in text.splitlines():
+        m = re.match(r'^[-*] ([A-Za-z_][A-Za-z0-9_ ]*):[ \t]*(.*)$', line)
+        if m:
+            key = m[1].lower()
+            if key in out:
+                raise ValueError('GUARD FAIL [duplicate-field] ' + key)
+            out[key] = m[2].strip()
+        elif key and line.startswith('  ') and line.strip():
+            out[key] += ' ' + line.strip()
+        elif line.startswith('#'):
+            key = None
     return out
 
 
@@ -55,9 +72,7 @@ def items(text):
         start = m.end()
         nxt = re.search(r"^###\s+", body[start:], re.M)
         block = body[start:start + nxt.start()] if nxt else body[start:]
-        fields = {k.strip().lower(): v.strip()
-                  for k, v in re.findall(r"^\s*[-*]\s*([a-z_ ]+):\s*(.*)$", block, re.M | re.I)}
-        out.append({"id": m.group(1), "title": m.group(2), "fields": fields})
+        out.append({"id": m.group(1), "title": m.group(2), "fields": fields(block)})
     return out
 
 
@@ -115,7 +130,11 @@ def check_verdict(text):
 
 def check_items(text):
     rc = 0
+    seen = set()
     for it in items(text):
+        if it["id"] in seen:
+            rc |= fail("[item] duplicate ID " + it["id"])
+        seen.add(it["id"])
         f, st = it["fields"], it["fields"].get("status", "").upper()
         for req in ("status", "impact", "must_hold", "applicable_sites"):
             if req not in f:
@@ -152,4 +171,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        sys.exit(main(sys.argv))
+    except (ValueError, OSError) as e:
+        sys.exit(str(e))

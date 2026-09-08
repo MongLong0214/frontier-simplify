@@ -6,6 +6,9 @@
 # Builds its own throwaway repository, so it runs anywhere and depends on no project.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_HERE="$HERE"
+HERE="${REVIEW_TEST_SCRIPTS:-$HERE}"
+export PYTHONDONTWRITEBYTECODE=1
 . "$HERE/lib/guards.sh"
 SKILL="$(cd "$HERE/.." && pwd)/SKILL.md"
 T=$(mktemp -d); trap 'git -C "$T/repo" worktree remove --force "$T/rw" >/dev/null 2>&1; rm -rf "$T"' EXIT
@@ -269,5 +272,13 @@ else
   fail=$((fail+1)); echo "NOT OK extract-takes-last: got '$got'"
 fi
 
+python3 "$TEST_HERE/selftest-protocol.py" "$HERE" > "$T/protocol.log" 2>&1
+extra_rc=$?
+cat "$T/protocol.log"
+extra_pass=$(awk '/^protocol-selftest:/{print $2}' "$T/protocol.log")
+extra_fail=$(awk '/^protocol-selftest:/{print $4}' "$T/protocol.log")
+pass=$((pass + ${extra_pass:-0}))
+fail=$((fail + ${extra_fail:-0}))
+if [ "$extra_rc" -ne 0 ] && [ "${extra_fail:-0}" -eq 0 ]; then fail=$((fail+1)); fi
 echo "--- selftest: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

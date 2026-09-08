@@ -25,13 +25,14 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
         texts.append(item.get("text", ""))
     # claude stream-json: {"type":"assistant","message":{"content":[{"type":"text",...}]}}
     if o.get("type") == "assistant":
-        for c in (o.get("message") or {}).get("content", []):
-            if c.get("type") == "text":
-                texts.append(c.get("text", ""))
+        message = [c.get("text", "") for c in (o.get("message") or {}).get("content", [])
+                   if c.get("type") == "text"]
+        if message:
+            texts.append("\n".join(message))
     if o.get("type") == "result" and isinstance(o.get("result"), str):
         texts.append(o["result"])
 
-for t in reversed(texts):
+for t in texts[-1:]:
     i = t.find(marker)
     if i >= 0:
         # A fenced answer is still the answer; strip a trailing fence if the model wrapped it.

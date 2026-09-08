@@ -11,26 +11,18 @@ guard_fail() { echo "GUARD FAIL [$1] $2" >&2; return 1; }
 # 1. The turn must have finished. A stream that stops early leaves a partial answer
 #    that still parses.
 #
-#    Two vocabularies, because round 2 must run on a different executor than round 1
-#    and they do not speak the same one: codex ends with `turn.completed`, claude with
-#    a `result` event. A guard that knew only one would fail every round of the other
+#    The supported executors have different event vocabularies: codex ends with
+#    `turn.completed`, claude with a `result` event. A guard that knew only one would fail every round of the other
 #    for a reason that has nothing to do with the review -- and a guard that fails for
 #    the wrong reason gets switched off.
-guard_turn_completed() {                       # <events.jsonl>
-  grep -qE '"type"[[:space:]]*:[[:space:]]*"(turn\.completed|result)"' "$1" \
-    || guard_fail turn-completed "no turn.completed (codex) or result (claude) event in $1 -- the reviewer's turn did not finish"
+guard_turn_completed() {
+  python3 "$(dirname "${BASH_SOURCE[0]}")/events.py" completed "$1" >/dev/null
 }
 
 # 2. cmds == 0 -- a reviewer that ran no command read nothing. The cheapest, least
 #    interpretable signal there is: it needs no judgement to read.
-guard_cmds_nonzero() {                         # <events.jsonl>
-  local n
-  n=$(grep -cE '"type"[[:space:]]*:[[:space:]]*"(command_execution|tool_use)"' "$1" || true)
-  # The count goes to stderr, not stdout: a caller reading stdout would otherwise
-  # capture "0" as a successful result and the guard would never fail its own check.
-  echo "commands_executed=${n:-0}" >&2
-  [ "${n:-0}" -gt 0 ] \
-    || guard_fail cmds-zero "reviewer executed 0 commands -- it filled the structure without reading the tree"
+guard_cmds_nonzero() {
+  python3 "$(dirname "${BASH_SOURCE[0]}")/events.py" commands "$1" >/dev/null
 }
 
 # 3. The reviewer must not see the target seal -- if it can read the seal it can echo
@@ -141,8 +133,10 @@ HARNESS_INPUTS = {"DIFF.patch", "CHANGED.txt", "ROUND1_INVENTORY.md",
 # and a membership test called it fabrication. Fabrication is "does not exist", never
 # "not on my list".
 for p in sorted(read - HARNESS_INPUTS):
-    if subprocess.run(["git", "-C", repo, "cat-file", "-e", f"{head}:{p}"],
-                      capture_output=True).returncode != 0:
+    base = next(l.split(": ", 1)[1] for l in open(seal + "/SEAL.txt").read().splitlines()
+                if l.startswith("base_sha: "))
+    if all(subprocess.run(["git", "-C", repo, "cat-file", "-e", f"{sha}:{p}"],
+                          capture_output=True).returncode != 0 for sha in (base, head)):
         bad.append(f"coverage-fabricated: {p} does not exist at {head[:8]}")
 missing = sorted(target - read - notread - HARNESS_INPUTS)
 if missing:

@@ -170,3 +170,5 @@ A tool against manufactured process should not manufacture process. The payload 
 ## License
 
 MIT
+
+Review protocol execution and offline guards: [runner guide](skills/sol-simplify-review/README.md).

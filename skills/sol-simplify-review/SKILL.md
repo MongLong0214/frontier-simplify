@@ -1,6 +1,7 @@
 ---
 name: sol-simplify-review
-description: The default protocol for any merge-gate or pre-merge review: inventory the reviewed head once, exhaustively, then verify only closure and remediation regressions. Use whenever a change is about to be merged and someone is reviewing it — not only when asked for it by name, and not only when rounds have already gone badly. Writing a fresh ad-hoc review prompt for a merge is the failure this replaces, and it happens most under time pressure or when a usual reviewing model is unavailable: swap the model inside this protocol rather than abandoning it. Skip only for an ordinary small one-pass read where nothing merges.
+description: >-
+  The default protocol for any merge-gate or pre-merge review: inventory the reviewed head once, exhaustively, then verify only closure and remediation regressions. Use whenever a change is about to be merged and someone is reviewing it — not only when asked for it by name, and not only when rounds have already gone badly. Writing a fresh ad-hoc review prompt for a merge is the failure this replaces, and it happens most under time pressure or when a usual reviewing model is unavailable: swap the model inside this protocol rather than abandoning it. Skip only for an ordinary small one-pass read where nothing merges.
 metadata:
   author: MongLong0214 <MongLong0214@users.noreply.github.com>
 
@@ -33,14 +34,16 @@ inventory as a change of output shape, not a restart.
 ## Why this is not a registry
 
 The inventory is one reviewer-owned artifact for one PR head. It is not committed to the product
-repository, updated after every merge, or used by CI to authorize work. It expires with the PR.
+repository or updated after every merge. Its obligations expire with the PR; the host may retain
+sealed round receipts for retrospective measurement.
 
 Every item names product behavior, a security boundary, or an explicit requirement. Tests and
-reproductions decide whether it closes. There is no validator for the inventory's shape, no status
-database, no approval graph, and no permanent count to keep synchronized.
+reproductions decide whether it closes. Mechanical guards check the declared accounting against
+Git and the handoff; they cannot certify that the reviewer found every obligation or sibling.
+There is no permanent product status database, approval graph, or count to synchronize.
 
-The seal script protects the handoff between two processes. It does not decide whether the product
-passes.
+The seals protect the handoff between processes. Guard acceptance means usable review evidence;
+it does not by itself mean the product passes.
 
 ## Host contract
 
@@ -476,11 +479,43 @@ Tool-shaped work:
 - Comparing Round-1-head..Remediation-head.
 - Sealing and verifying the inventory bytes.
 
+The bundled [scripts](README.md) implement this tool-shaped work:
+
+- `scripts/target-seal.sh` binds the base, head and changed blobs before review.
+- `scripts/review-seal.sh` seals/verifies a standalone inventory handoff;
+  `scripts/review-round.sh` binds the same exact bytes into host-owned round receipts.
+- `scripts/review-round.sh` renders these fenced prompts through `lib/render-prompt.py`,
+  gives the reviewer a disposable checkout and Git-generated inputs, and runs the guards.
+  File reading, searches, reproductions and test execution remain reviewer tool work.
+- `scripts/review-round.sh hunks` generates hunk identities from the sealed round-1 head
+  to the remediation head. The response maps every identity to existing item IDs or an
+  `UNRELATED:` explanation. Binary, mode-only, deletion, empty-file and rename endpoints
+  are included. Unrelated functionality requires a scope restart, not a waived hunk.
+- `scripts/review-round.sh report` recomputes guard results and counts from sealed artifacts.
+  A stable PR ID owns an automatically numbered sequence; a new phase-1 inventory does
+  not reset it. Round 3+ requires original inventory IDs, an escape category and evidence
+  tied to the prior review or changed head. Protocol escape evidence in a closure also
+  names the original class/obligation ID whose enumeration failed.
+- `scripts/review-pr.sh` resolves a configured consumer PR into this sequence. The host
+  supplies consumer paths, project classes, executors and any model selection as configuration.
+- `scripts/install-hook.sh` installs an offline commit check on staged skill changes;
+  an installed test suite and the candidate suite both exercise the staged scripts.
+
+Guards require all ten portable IDs, supplied host obligation/project IDs, consistent coverage,
+FAIL dispositions, listed sibling checks and closure evidence. A host cannot derive unstated
+requirements from a count; enumerating obligations and proving a sweep exhaustive remain review work.
+
+The round report shows the distinct original item IDs tagged `ROUND1-ESCAPE` divided by original
+inventory items, as well as IDs responsible for extra closure rounds and their categories. These
+are observed item escape rates, not an estimate of all undiscovered defects. A rejected or interrupted
+attempt remains visible. The receipts are host-owned audit evidence, not reviewer-supplied pass files.
+
 Without file access and executable tests, this is a structured opinion, not a P0 merge gate.
 
 ## Limits
 
-Do not claim two-round convergence when:
+Complete enumeration can support the two-round plan described in the round-1 prompt, even with
+PARTIAL verification. Do not claim *verified* two-round convergence when:
 
 - Round 1 contains UNVERIFIED items.
 - The change or its behavior cone exceeds the review context.
@@ -489,4 +524,4 @@ Do not claim two-round convergence when:
 - The implementer does not answer every failing item and changed hunk.
 - The requirement itself is incompatible with the chosen architecture.
 
-In those cases, say which condition failed. Do not create another ledger or exception process.
+In those cases, say which condition failed in the existing PR round receipts. Do not create a second ledger or exception process.

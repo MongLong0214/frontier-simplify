@@ -1,0 +1,8 @@
+{
+  "consumers": [
+    {
+      "repository": "/Users/isaac/projects/agent-operator-score",
+      "markers": ["agent-operator-score", "AOS"]
+    }
+  ]
+}

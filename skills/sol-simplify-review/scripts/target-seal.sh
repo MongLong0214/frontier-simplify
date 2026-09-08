@@ -24,19 +24,20 @@ sha256() {
 }
 
 build_inventory() {   # <repo> <base> <head>  -> stdout: "<blob_sha>  <path>" sorted
-  local repo="$1" base="$2" head="$3"
-  git -C "$repo" diff --name-only "$base" "$head" | LC_ALL=C sort | while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    local blob
-    if blob=$(git -C "$repo" rev-parse --verify --quiet "$head:$p"); then
-      printf '%s  %s\n' "$blob" "$p"
-    else
-      # Deleted at head. It is still a changed file the reviewer must account for, so it
-      # belongs in the inventory; recording it as absent keeps the digest honest about why
-      # there is no blob.
-      printf '%s  %s\n' "absent" "$p"
-    fi
-  done
+  python3 - "$@" <<'PYTHON'
+import subprocess, sys
+repo, base, head = sys.argv[1:]
+def git(*args):
+    return subprocess.check_output(['git', '-C', repo, *args], stderr=subprocess.PIPE)
+paths = sorted(p for p in git('diff', '--no-renames', '--name-only', '-z', base, head).split(b'\0') if p)
+for raw in paths:
+    path = raw.decode('utf-8')
+    if '\n' in path or '\r' in path:
+        sys.exit('GUARD FAIL [target-path] newline filenames cannot be represented in Markdown file accounting')
+    p = subprocess.run(['git', '-C', repo, 'rev-parse', '--verify', '--quiet', head + ':' + path], capture_output=True)
+    blob = p.stdout.decode().strip() if p.returncode == 0 else 'absent'
+    print(blob + '  ' + path)
+PYTHON
 }
 
 cmd_seal() {
@@ -80,9 +81,10 @@ cmd_verify() {
   base=$(seal_field "$out" base_sha); head=$(seal_field "$out" head_sha)
   inv=$(seal_field "$out" target_sha256); n=$(seal_field "$out" inventory_files)
 
-  local recomputed="$out/.inventory.recheck"
+  local recomputed; recomputed=$(mktemp "$out/.inventory.XXXXXX")
   build_inventory "$repo" "$base" "$head" > "$recomputed"
   local now stored
+  [ "$(wc -l < "$out/inventory.txt" | tr -d ' ')" = "$n" ] || { echo "FAIL inventory-count: count differs from seal" >&2; exit 4; }
   now=$(sha256 "$recomputed"); stored=$(sha256 "$out/inventory.txt")
   rm -f "$recomputed"
 

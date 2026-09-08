@@ -161,3 +161,5 @@ docs: say where acceptance is decided, because the rule as written refuses all w
 ## License
 
 MIT
+
+리뷰 프로토콜 실행·오프라인 가드: [실행 가이드](skills/sol-simplify-review/README.md).
