@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import json
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -68,8 +69,17 @@ def main():
                                         ledger_root.stdout.strip()], capture_output=True, text=True)
             if harvested.returncode == 0 and harvested.stdout.strip() not in ('', 'none'):
                 os.environ['REVIEW_CATALOG'] = harvested.stdout
-                print('review-pr: catalog carried forward from %d earlier round(s)'
-                      % harvested.stdout.count('\nP-'), file=sys.stderr)
+                # A supplied catalog is only supplied if the inventory has to answer for it. The
+                # runner checks that every declared class was instantiated, and it learns which
+                # ones from REVIEW_EXPECTED_IDS -- so handing over the text without the ids makes
+                # the classes optional, which is the same as not carrying them. Derived from the
+                # rendered catalog rather than tracked beside it: two lists of the same thing is
+                # how one goes stale.
+                ids = re.findall(r'^P-\d+', harvested.stdout, re.M)
+                if ids and not os.environ.get('REVIEW_EXPECTED_IDS'):
+                    os.environ['REVIEW_EXPECTED_IDS'] = ','.join(ids)
+                print('review-pr: catalog carried forward from %d earlier round(s): %s'
+                      % (len(ids), ', '.join(ids)), file=sys.stderr)
     argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
     print(f'review-pr: consumer host {host}', file=sys.stderr)
     if a.phase == 'auto':
