@@ -32,6 +32,17 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     if o.get("type") == "result" and isinstance(o.get("result"), str):
         texts.append(o["result"])
 
+# A reviewer that emits the inventory and then appends a correction has amended its own artifact.
+# Taking the earlier message would seal something its author has already revised -- worse than
+# refusing, because the seal would bind a version the reviewer withdrew. So the artifact must be the
+# final message, and this names which of the two happened instead of leaving the caller an empty
+# file and a shape error listing every missing section.
+if texts and marker not in texts[-1] and any(marker in t for t in texts):
+    print("extract: the artifact was emitted and then amended by a later message. The protocol asks "
+          "for it once, complete, as the final message; nothing was extracted, because sealing the "
+          "earlier one would bind a version its author has revised.", file=sys.stderr)
+    sys.exit(2)
+
 for t in texts[-1:]:
     i = t.find(marker)
     if i >= 0:

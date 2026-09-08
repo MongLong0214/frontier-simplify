@@ -333,6 +333,27 @@ with open(T + "/none.jsonl", "w") as f:
                         "item": {"type": "agent_message", "text": "no artifact here"}}) + "\n")
 PY
 ex() { python3 "$HERE/lib/extract.py" "$1" "# Round 1 review inventory"; }
+# Measured: a reviewer emitted a complete inventory, then appended one corrected line after its
+# mutation sweep finished. The earlier message must not be sealed -- its author has revised it --
+# but the caller was left an empty file and a shape error naming every missing section, which
+# describes neither what happened nor what to do.
+python3 - "$T" <<'PY'
+import json, sys
+T = sys.argv[1]
+with open(T + "/amended.jsonl", "w") as f:
+    for t in ("# Round 1 review inventory\nFULL\n",
+              "One correction to the coverage line; the verdict is unchanged.\n"):
+        f.write(json.dumps({"type": "assistant",
+                            "message": {"content": [{"type": "text", "text": t}]}}) + "\n")
+    f.write(json.dumps({"type": "result", "subtype": "success"}) + "\n")
+PY
+ck extract-amended-refused fail ex "$T/amended.jsonl"
+# stderr goes to a file, not through `2>&1`: ck redirects the function's stdout to /dev/null
+# before the body runs, so `2>&1` would duplicate /dev/null and the message would vanish.
+amended_says_why() { ex "$T/amended.jsonl" 2>"$T/amended.err" >/dev/null
+  grep -q 'amended by a later message' "$T/amended.err"; }
+ck extract-amended-names-the-cause ok amended_says_why
+
 ck extract-finds           ok   ex "$T/two.jsonl"
 ck extract-absent          fail ex "$T/none.jsonl"
 got=$(ex "$T/two.jsonl" | tr -d '\n')
