@@ -56,10 +56,20 @@ def main():
     # makes using this protocol improve it, rather than only improving what it is pointed at.
     # An explicit REVIEW_CATALOG still wins: the host may always override what it feeds back.
     if not os.environ.get('REVIEW_CATALOG'):
-        harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
-                                    str(host / str(a.pr))], capture_output=True, text=True)
-        if harvested.returncode == 0 and harvested.stdout.strip() not in ('', 'none'):
-            os.environ['REVIEW_CATALOG'] = harvested.stdout
+        # Ask the runner where this PR's rounds live rather than rebuilding the path here. The
+        # first version pointed at the consumer host directory, which holds the mirror and the PR
+        # metadata but no round artifacts, so the harvest found nothing and injected nothing --
+        # silently. A feedback loop that no-ops is worse than one that is missing: nothing says it
+        # is not working, and the rounds go on rediscovering the class it was built to carry.
+        ledger_root = subprocess.run([str(SCRIPTS / 'review-round.sh'), 'path', str(mirror),
+                                      head, str(a.pr)], capture_output=True, text=True)
+        if ledger_root.returncode == 0 and ledger_root.stdout.strip():
+            harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
+                                        ledger_root.stdout.strip()], capture_output=True, text=True)
+            if harvested.returncode == 0 and harvested.stdout.strip() not in ('', 'none'):
+                os.environ['REVIEW_CATALOG'] = harvested.stdout
+                print('review-pr: catalog carried forward from %d earlier round(s)'
+                      % harvested.stdout.count('\nP-'), file=sys.stderr)
     argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
     print(f'review-pr: consumer host {host}', file=sys.stderr)
     if a.phase == 'auto':

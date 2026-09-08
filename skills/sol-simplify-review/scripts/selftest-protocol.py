@@ -343,6 +343,15 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
           lambda: bool(ledger.audit(rejected_root, repo)))
     r1 = host('1', h1)
     root = Path(host('path', h1).stdout.strip())
+    # A feedback loop that no-ops is worse than a missing one: nothing says it is not working.
+    # The first wiring pointed at the consumer host directory, which holds the mirror and the PR
+    # metadata and no round artifacts, so it harvested nothing and injected nothing in silence.
+    # Pin that the root a run reports is the root the rounds are in.
+    reported = host('path', h1).stdout.strip()
+    check('catalog-harvests-the-root-runs-use', True,
+          lambda: bool(reported) and Path(reported) == root)
+    check('catalog-root-holds-rounds', True,
+          lambda: any(Path(reported).glob('round-*/ARTIFACT.md')))
     check('host-block-exits-nonzero', True, lambda: r1.returncode != 0)
     check('host-block-inventory-sealed', True, lambda: ledger.audit(root, repo)[1][1]['accepted'])
     events(t / 'events', close.replace('— CLOSED', '— OPEN').replace('\nPASS\n', '\nBLOCK\n'))
