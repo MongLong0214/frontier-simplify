@@ -13,17 +13,17 @@
       "markers": []
     },
     {
-      "repository": "/Users/isaac/projects/repo-factory",
-      "markers": [
-        "repo-factory",
-        "repofactory"
-      ]
-    },
-    {
       "repository": "/Users/isaac/projects/logic-pro-mcp",
       "markers": [
         "logic-pro-mcp",
         "logicpromcp"
+      ]
+    },
+    {
+      "repository": "/Users/isaac/projects/agent-control-plane",
+      "markers": [
+        "agent-control-plane",
+        "acp"
       ]
     }
   ]
