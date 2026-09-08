@@ -53,9 +53,21 @@ def verify_hashes(directory, expected):
                 'ledger-integrity', f'{directory.name}/{name}: digest mismatch')
 
 
+class MissingGuard(Exception):
+    """A named check is not defined. That is a broken harness, not a finding about the review."""
+
+
 def shell_guard(name, *args):
-    p = subprocess.run(['bash', '-c', 'source "$1"; shift; "$@"', 'guards',
-                        str(HERE / 'guards.sh'), name, *map(str, args)], capture_output=True, text=True)
+    # Ask whether the check exists before running it. A guard removed while a caller still names
+    # it came back as `command not found` inside the guard's own failure text, and a check that
+    # does not exist refused a round -- absence scored as a finding, in the harness that exists to
+    # catch that. Reported by a consumer whose artifact was BLOCKed by a check nobody had written.
+    p = subprocess.run(['bash', '-c', 'source "$1"; shift; declare -F "$1" >/dev/null || exit 127; '
+                                      '"$@"', 'guards', str(HERE / 'guards.sh'), name,
+                        *map(str, args)], capture_output=True, text=True)
+    if p.returncode == 127:
+        raise MissingGuard(f'{name} is not defined in guards.sh; the harness is broken, and this '
+                           'says nothing about the review')
     require(p.returncode == 0, name, p.stderr.strip().replace('\n', '; '))
 
 

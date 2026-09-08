@@ -81,6 +81,21 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     events(t / 'events', original)
     r1 = host('1')
     root = root_for()
+    # A check that does not exist must not refuse a round. Reported by a consumer whose artifact
+    # was BLOCKed by `guard_no_placeholder: command not found` -- a guard removed while a caller
+    # still named it, its absence arriving as that guard's own failure text. Absence scored as a
+    # finding, inside the harness built to catch that.
+    def _raised(fn):
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001 - the type IS the assertion
+            return e
+        return None
+    check('missing-guard-is-a-harness-error', True,
+          lambda: isinstance(_raised(lambda: ledger.shell_guard('guard_that_does_not_exist', '/tmp')),
+                             ledger.MissingGuard))
+    check('present-guard-still-judges', True,
+          lambda: _raised(lambda: ledger.shell_guard('guard_no_seal_in_tree', '/tmp')) is None)
     check('prose-recorded-without-inventory-envelope', True, lambda: r1.returncode == 10 and ledger.audit(root, repo)[1][1]['recorded'])
     check('prose-recorded-is-never-merge-success', True, lambda: r1.returncode != 0)
     check('original-bytes-preserved', True, lambda: (root / 'round-0001/ARTIFACT.md').read_bytes() == original.encode())
