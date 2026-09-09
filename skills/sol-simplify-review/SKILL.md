@@ -2,8 +2,8 @@
 name: sol-simplify-review
 description: >-
   Review a change for concrete defects, then check repairs and their regressions against the
-  preserved review. Use for substantial PR reviews or repeated review rounds. This is a review
-  aid, not an automatic merge gate or a promise of two-round convergence.
+  preserved review. Use for substantial PR reviews or repeated review rounds. Stops automatic
+  review after at most three attempts per PR and hands off; does not guarantee safe merge convergence.
 metadata:
   author: MongLong0214 <MongLong0214@users.noreply.github.com>
 ---
@@ -15,7 +15,13 @@ Find defects with evidence. Preserve the findings. Check the repair and its affe
 The previous automatic gate failed its own first step: one consumer PR recorded 13 attempts,
 ten executed reviews, and no accepted inventory. It found useful defects but repeatedly rejected
 usable prose. A finished enumeration is a reviewer's coverage claim, not proof of completeness.
-Two rounds are a useful review sequence, not a convergence guarantee.
+Two phases are a useful review sequence, not a convergence guarantee. The host allows at most
+three cumulative attempts per stable PR, including failed and interrupted attempts. On the third
+attempt it hands off; later invocations launch no reviewer. New heads, new responses and phase-1
+restarts do not reset the count. Legacy attempts count too; never rename a PR to evade the limit.
+This guarantees bounded automatic attempts, not a deadline or a safe merge within three rounds.
+Repairs can create regressions and the first review can miss blockers, so neither a frozen first
+inventory nor a decreasing finding count establishes that stronger promise.
 
 The host checks execution completion, exact commits, ancestry and preserved bytes. The reviewer
 judges coverage, requirements, severity and closure from the code and evidence. No Markdown
@@ -102,6 +108,10 @@ the affected sites, and verify that a test can fail for the behavior it claims t
 ```text
 Review this change for concrete defects. Investigate first, then write one final review in prose.
 
+Automatic attempt: {{ATTEMPT_NUMBER}} of {{MAX_ROUNDS}} for this PR. At the limit, this is the
+final automatic review: give the remaining findings, coverage gaps and next actions for a human.
+The limit never closes or downgrades a blocker and never establishes merge readiness.
+
 Repository: {{REPOSITORY}}
 Base commit: {{BASE_SHA}}
 Reviewed head: {{ROUND1_HEAD_SHA}}
@@ -156,12 +166,17 @@ unchanged; a response does not replace what the reviewer said.
 The host carries the original review, the previous follow-up when present, and Git's complete
 remediation diff into the next review. Hunk identities are available for navigation; no prose-to-ID
 mapping is a prerequisite for running the reviewer. Unrelated changes need a fresh scope review.
-Record that in the review itself, without an extra escape form or a round-budget gate.
+Record that in the review itself. A fresh scope review consumes the same PR's remaining budget;
+at the limit, hand off that need instead of restarting. No escape form can buy another attempt.
 
 ## Round 2 prompt
 
 ```text
 Review the repair against the preserved findings and check the repair for regressions.
+
+Automatic attempt: {{ATTEMPT_NUMBER}} of {{MAX_ROUNDS}} for this PR. At the limit, this is the
+final automatic review: give the remaining findings, coverage gaps and next actions for a human.
+The limit never closes or downgrades a blocker and never establishes merge readiness.
 
 Repository: {{REPOSITORY}}
 Base commit: {{BASE_SHA}}
@@ -169,6 +184,9 @@ Round-1 head: {{ROUND1_HEAD_SHA}}
 Remediation head: {{ROUND2_HEAD_SHA}}
 Trusted original review SHA-256: {{TRUSTED_INVENTORY_SHA256}}
 Original review integrity: {{INVENTORY_INTEGRITY_RESULT}}
+Requirement sources: {{REQUIREMENT_SOURCES_OR_NONE}}
+Known and already routed exact defects: {{KNOWN_ROUTED_OR_NONE}}
+Project history and replayed review leads: {{PROJECT_CLASS_CATALOG_OR_NONE}}
 Ordinary full-suite status: {{FULL_SUITE_STATUS_OR_UNKNOWN}}
 Tool or platform notes: {{TOOL_NOTES_OR_NONE}}
 
@@ -205,8 +223,9 @@ Write a concise prose review. Recommend PASS only when the blocking findings are
 disproved with evidence, the repair introduces no known blocker, and required review/tests are
 complete and passing. PASS WITH NITS may retain only nonblocking findings. Otherwise say BLOCK
 or INCOMPLETE and name the remaining work. A recommendation is for the maintainer to assess;
-the host never converts it into automatic merge authorization. More than two attempts is an
-observed cost, not a protocol violation that requires invented escape IDs.
+the host never converts it into automatic merge authorization. The third attempt ends automatic
+review even when BLOCK or INCOMPLETE remains. Do not suggest a fourth automatic review to obtain
+PASS. Preserve new blockers as blocking in the handoff; do not move them out merely to converge.
 ```
 
 ## Runner and limits

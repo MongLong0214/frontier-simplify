@@ -155,12 +155,14 @@ docs: say where acceptance is decided, because the rule as written refuses all w
 **다른 모델에서도 되나?**
 모른다. `gpt-5.6-sol`을 위해 쓰고 그 위에서 측정했다. 이 실패 모드를 만드는 게 그 모델의 ambition 튜닝이다. 다른 환경 결과는 환영한다.
 
-**왜 훅도 인스톨러도 런타임 코드도 없나?**
-제조된 절차에 반대하는 도구가 절차를 제조하면 안 된다. 페이로드는 에이전트가 스스로 집는 마크다운 한 장이다. 추가된 건 `codex plugin add`와 `/plugin install`이 동작하게 하는 정적 JSON manifest뿐이다. 아무것도 실행하지 않는다.
+**왜 핵심 스킬은 마크다운 한 장인가?**
+핵심 `sol-simplify` 스킬은 마크다운 한 장입니다. 선택적으로 쓰는 리뷰 스킬에는 명시적으로 실행하는
+리뷰 실행기, 회귀 재생기와 로컬 테스트 훅도 있습니다. 플러그인 설치만으로 poller가 시작되지는 않습니다.
 
 ## License
 
 MIT
 
 리뷰 지원·근거 보존: [실행 가이드](skills/sol-simplify-review/README.md).
-자동 머지 승인과 두 라운드 수렴 주장은 철회했습니다. 근거는 [소비자 재검토](dogfood/REASSESSMENT.md)에 있습니다.
+자동 리뷰는 PR별 최대 3시도에서 끝내고 남은 판단을 인계합니다. 안전한 머지까지의 수렴은 보장하지 않습니다.
+회귀 테스트 재생으로 측정한 단서를 다음 리뷰에 공급합니다. 근거는 [소비자 재검토](dogfood/REASSESSMENT.md)에 있습니다.

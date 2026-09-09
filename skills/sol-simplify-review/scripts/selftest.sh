@@ -18,6 +18,14 @@ export PYTHONDONTWRITEBYTECODE=1
 SKILL="$(cd "$HERE/.." && pwd)/SKILL.md"
 T=$(mktemp -d); trap 'git -C "$T/repo" worktree remove --force "$T/rw" >/dev/null 2>&1; rm -rf "$T"' EXIT
 pass=0; fail=0
+# REVIEW_SELFTEST_FAST=1 runs the checks that do not build repositories or spawn reviewers.
+# The pre-commit hook uses it, because a hook that takes minutes is a hook somebody switches off
+# -- and this suite grew from 34 cases to 164 in one day while the hook ran all of them twice,
+# once for the installed copy and once for the staged one. The full suite still gates the commit,
+# it just does it where waiting is free: run it before pushing, or let CI run it.
+fast="${REVIEW_SELFTEST_FAST:-}"
+skip_slow() { [ -n "$fast" ]; }
+
 ck() { # <name> <expect: ok|fail> <cmd...>
   local n="$1" e="$2"; shift 2
   if "$@" >/dev/null 2>&1; then r=ok; else r=fail; fi
@@ -134,6 +142,7 @@ ck crosscheck-leak-cannot-forge-match ok env_leak_cannot_forge_a_match
 
 # --- prompt rendering ------------------------------------------------------------------------------
 r1() { python3 "$HERE/lib/render-prompt.py" "$SKILL" 1 REPOSITORY=r BASE_SHA=b ROUND1_HEAD_SHA=h \
+  ATTEMPT_NUMBER=1 MAX_ROUNDS=3 \
   REQUIREMENT_SOURCES_OR_NONE=none KNOWN_ROUTED_OR_NONE=none PROJECT_CLASS_CATALOG_OR_NONE=none \
   FULL_SUITE_STATUS_OR_UNKNOWN=UNKNOWN TOOL_NOTES_OR_NONE=none; }
 ck render-round1           ok   r1
@@ -188,11 +197,19 @@ else
   fail=$((fail+1)); echo "NOT OK extract-takes-last: got '$got'"
 fi
 
+# The protocol suite builds repositories and drives whole rounds; it is the slow half and the
+# reason the hook could take minutes. Fast mode reports what it skipped rather than pretending
+# the number is the same -- a suite that quietly shrinks is a suite whose count means nothing.
+if skip_slow; then
+  echo "--- fast mode: the protocol suite (repositories, rounds) was NOT run"
+  extra_rc=0; extra_pass=0; extra_fail=0
+else
 python3 "$TEST_HERE/selftest-protocol.py" "$HERE" > "$T/protocol.log" 2>&1
 extra_rc=$?
 cat "$T/protocol.log"
 extra_pass=$(awk '/^protocol-selftest:/{print $2}' "$T/protocol.log")
 extra_fail=$(awk '/^protocol-selftest:/{print $4}' "$T/protocol.log")
+fi
 pass=$((pass + ${extra_pass:-0}))
 fail=$((fail + ${extra_fail:-0}))
 if [ "$extra_rc" -ne 0 ] && [ "${extra_fail:-0}" -eq 0 ]; then fail=$((fail+1)); fi

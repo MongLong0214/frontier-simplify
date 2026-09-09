@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from protocol import digest, git, require, Rejected, review_exit
+from protocol import digest, git, require, Rejected, review_exit, HANDOFF, MAX_ROUNDS
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 
@@ -49,7 +49,7 @@ def main():
     # The reviewer's own cwd is the correct disposable checkout; the prompt gets the identity.
     os.environ['REVIEW_REPOSITORY_NAME'] = origin
     # History supplies attributed leads, never required IDs or self-promoted obligations.
-    if not os.environ.get('REVIEW_CATALOG') and a.phase in {'1', 'auto'}:
+    if a.phase in {'1', '2', 'auto'}:
         ledger_root = subprocess.run([str(SCRIPTS / 'review-round.sh'), 'path', str(mirror),
                                       head, str(a.pr)], capture_output=True, text=True)
         require(ledger_root.returncode == 0, 'consumer', ledger_root.stderr.strip())
@@ -58,7 +58,13 @@ def main():
         harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
                                     ledger_root.stdout.strip()], capture_output=True, text=True)
         require(harvested.returncode == 0, 'consumer', harvested.stderr.strip())
-        os.environ['REVIEW_CATALOG'] = harvested.stdout
+        leads = [os.environ.get('REVIEW_CATALOG', ''), harvested.stdout]
+        lessons = os.environ.get('REVIEW_LESSONS')
+        if lessons:
+            directory = Path(lessons)
+            require(directory.is_dir(), 'consumer', 'REVIEW_LESSONS directory is missing')
+            leads += [p.read_text() for p in sorted(directory.glob('*/LEAD.md'))]
+        os.environ['REVIEW_CATALOG'] = '\n\n'.join(s for s in leads if s.strip() and s.strip() != 'none') or 'none'
         print('review-pr: project history supplied as leads, not standing obligations', file=sys.stderr)
     argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
     print(f'review-pr: consumer host {host}', file=sys.stderr)
@@ -71,11 +77,14 @@ def main():
         import ledger
         ledger_root = runner.root_for(mirror, str(a.pr))
         starts, ends, originals = ledger.audit(ledger_root, mirror)
+        if len(starts) >= MAX_ROUNDS:
+            ledger.handoff(ledger_root, mirror, head)
+            return HANDOFF
         response = Path(os.environ.get('REVIEW_RESPONSE', str(host / f'pr-{a.pr}-response.md')))
         if response.exists():
             os.environ['REVIEW_RESPONSE'] = str(response)
         latest = starts[max(starts)] if starts else None
-        if latest and latest['head_sha'] == head:
+        if latest and latest['head_sha'] == head and latest.get('base_sha') == base:
             end = ends.get(latest['round'], {})
             changed_inputs = any(path.exists() and digest(path.read_bytes()) != latest['inputs'].get(name)
                                  for name, path in [('IMPLEMENTER_RESPONSE.md', response)])
@@ -83,7 +92,7 @@ def main():
                 ledger.report(ledger_root, mirror)
                 available = ledger.evidence_available(ledger.recompute(
                     mirror, ledger_root / f"round-{latest['round']:04}", latest), end)
-                return review_exit(available)
+                return review_exit(available, len(starts))
         argv[1] = '2' if originals else '1'
     return subprocess.run(argv).returncode
 

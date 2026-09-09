@@ -3,6 +3,7 @@
 [SKILL.md](SKILL.md) owns the question-led prompts and review recommendations. The runner preserves
 execution evidence and exact Git targets. It does **not** turn a Markdown verdict into merge
 permission. Bash, Git and Python 3.9+ are required; live runs also need a repository-capable executor.
+The optional witness replay and the full selftest also require Node 22+.
 
 ## One PR, preserved reviews
 
@@ -21,7 +22,14 @@ scripts/review-round.sh hunks "$REPO" "$REMEDIATION_HEAD" "$PR_ID"
 Phase 1 reviews the change. Phase 2 checks the repair, the earlier findings, any later open findings,
 and remediation regressions. Actual attempt numbers are assigned under a per-PR lock. A follow-up
 requires the same base and a descendant of the original head. For unrelated work or changed scope,
-run a new phase 1; it retains the attempt history. More than two attempts needs no escape form.
+a fresh phase 1 consumes the same PR budget. **At most three attempts per stable PR** may start,
+including failures and interruptions. The per-PR lock protects the count; it is checked before
+creating another attempt or launching an executor. No head, response or phase change resets it.
+Legacy attempts count; a PR already over the limit immediately hands off without rewriting history.
+The third attempt is the last automatic review. Later calls report the preserved artifacts and
+remaining human work without running a model or appending another refusal. Keep the PR ID and
+artifact root stable; this is a cooperative host limit, not protection against an operator deleting
+history or assigning an alias. It bounds attempts, not wall time, repair count or safe merge arrival.
 
 The implementer response is optional prose. When absent, the reviewer works from the complete diff
 and explains any uncertainty. Git-generated hunk IDs are navigation aids, not required mappings.
@@ -31,6 +39,7 @@ original-head..remediation-head diff. Reviewers must carry unresolved findings a
 | Exit | Meaning |
 |---|---|
 | `10` from a review or cached review | Execution evidence recorded; read the review and make the merge decision through the existing review workflow. |
+| `11` from a review or cached review | Automatic review budget exhausted; human handoff. The third intact review and all later calls return this. It can contain BLOCKERs, gaps or an unreviewed requested head. |
 | `5` from a review | Execution, target or evidence checks failed. |
 | Other nonzero | Invocation or environment error. |
 | `0` from `report`, `path` or `hunks` | The read-only utility completed. This is never a PR approval. |
@@ -40,6 +49,17 @@ caller that previously used exit 0 as a merge gate must stop doing so. Do not re
 approval: a BLOCK, an incomplete review and an uninformative answer all share it. Execution completion
 and product safety are different questions. The existing maintainer and required product checks
 assess the evidence; there is no new approval record or alternate override path.
+An evidence failure on attempt three still returns 5 and prints the terminal handoff; subsequent
+calls return 11. Neither status licenses a retry beyond the budget. `report` and evidence replay
+remain available after the limit. Replay's 10 means evidence availability even for historical
+attempts over the limit; replay does not launch a reviewer or grant a new attempt.
+
+The tool does not block or authorize a merge. Required product checks and maintainer decisions do.
+Review recommendations remain BLOCK for every confirmed, unresolved defect in scope, including
+repair regressions and original blockers discovered later. Missing required evidence prevents a
+PASS recommendation. Nits, prose formatting, catalog repetition and the exhausted budget cannot
+turn into a product blocker or close one. Humans assess requirements, coverage, severity, disputed
+reproductions, closure, and integration risk on the actual merge target.
 
 ## Evidence and trust
 
@@ -86,7 +106,7 @@ fill prompt inputs. `REVIEW_EXECUTOR` selects codex or claude; `REVIEW_CODEX_MOD
 the model. Without an explicit base, phase 1 needs `REVIEW_TARGET_BRANCH`; phase 2 inherits its base.
 `REVIEW_RESPONSE` optionally names the implementer's separate response.
 
-`REVIEW_EXPECTED_IDS` and `REVIEW_ESCAPES` no longer impose obligations. Automatically harvested
+`REVIEW_EXPECTED_IDS` and `REVIEW_ESCAPES` no longer impose obligations or replenish the budget. Automatically harvested
 catalog candidates are attributed leads from the current PR, including rejected reviews. Repetition
 and a reviewer's assertion of recurrence never promote a mandatory class. Explicit host catalogs
 remain usable inputs, and findings must be checked against current code.
@@ -100,13 +120,43 @@ scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto
 
 The adapter resolves exact PR commits with `gh`, fetches them into a host clone and invokes the
 runner. Auto mode reviews each head once and routes changed heads to follow-up when an original
-review is available. Explicit `1` or `2` can retry. Cached results have the same nonapproval status.
+review is available. Explicit `1` or `2` can retry within the three-attempt budget. Cached results
+have the same nonapproval status and are bound to both base and head.
 It does not decide whether the PR has merged or whether the review caused a fix.
 
 Consumer configuration lives outside the portable skill. `REVIEW_CONSUMERS_CONFIG` names a JSON
 file of consumer repositories and optional portability markers. The maintainer's `dogfood/` command
 can discover open PRs through an existing scheduler. Registration alone neither installs a scheduler
 nor wires a remote required check.
+
+## Replay a regression and feed it into later reviews
+
+Select the source finding and one top-level Node test that exercises it. The helper copies that
+test file from AFTER unchanged into disposable local clones of BEFORE and AFTER. It runs the exact
+test name and retains machine events, commands, statuses and hashes outside the consumer checkout:
+
+```sh
+python3 scripts/lib/witness.py "$REPO" "$BEFORE" "$AFTER" \
+  tests/behavior.test.mjs 'exact test name' "$SOURCE_REVIEW" "$LESSONS/behavior" \
+  --lesson 'Does this change repeat the observed cause? Check the relevant sibling paths.'
+REVIEW_LESSONS="$LESSONS" scripts/review-pr.sh "$REPO" "$PR_NUMBER" auto
+```
+
+Only an assertion failure from that unique named test followed by its passing result publishes
+`LEAD.md`. Missing names (even a passing file wrapper), skips, TODOs, load/runtime errors, timeouts,
+and a passing test followed by process failure do not count as a repaired regression. The default
+timeout is 60 seconds per process; `--timeout` changes it. An existing output directory is refused
+so a failed rerun cannot accidentally republish stale success. Exit 0 means this measured contrast
+was recorded, never that the consumer can merge. Logs and source reviews may contain private code;
+keep the lesson directory host-owned and private.
+
+`REVIEW_LESSONS` supplies all `*/LEAD.md` files to both review phases along with current-PR leads
+and an explicit `REVIEW_CATALOG`. The host selects the question and source relation; the helper
+does not infer them from prose or call repetition independent recurrence. The result demonstrates
+one regression witness and delivery of its lesson, not improved model recall. There is no automatic
+code patch, class promotion or merge. Dependencies must already be available to the test in the
+clones; this helper installs none. It supports flat `.mjs` Node tests; other runners need an adapter
+that reads their own named test results, not an imitation of Node's pass-count behavior.
 
 ## Offline verification and hook
 

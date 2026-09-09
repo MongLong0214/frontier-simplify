@@ -12,10 +12,14 @@ python3 dogfood/install.py --interval "$POLL_SECONDS" --artifacts "$REVIEW_ARTIF
 ```
 
 It needs working `gh`, Git network access and an authenticated reviewer. The adapter attempts each
-head once; changed heads enter follow-up when an original review is available. See the
+head once within a cumulative **three-attempt PR budget**; changed heads enter follow-up when an
+original review is available. Failures and interruptions consume attempts too. The third attempt
+hands off and later polls launch no reviewer. This guarantees termination of automatic attempts,
+not safe merge convergence. See the
 [runner guide](../skills/sol-simplify-review/README.md) for optional remediation responses and retries.
 
-Runner exit 10 means review evidence was recorded. The poller treats it as a completed invocation,
+Runner exit 10 means review evidence was recorded; 11 means the automatic budget ended in a human
+handoff. The poller treats these as completed invocations,
 so a BLOCK recommendation does not appear as an infrastructure failure. Poller exit 0 means its
 invocations completed, **never that any PR is approved**. Existing maintainer review and product
 checks decide merging; neither this command nor its child runner belongs in an automatic approval
@@ -36,12 +40,19 @@ supports broader investigation, while a cross-consumer claim needs the source co
 before it can be counted as independently reproduced. A direct user observation is attributed as
 such, not discarded and not silently upgraded. No prose parser grants this status.
 
-The selector lesson has now changed portable question 4 and both rendered review prompts: inspect
-the named witnesses selected by each alternative, including selectors affected by test renames.
-The replay found that even `pass > 0` can count only a file wrapper. The unchanged consumer test
-fails on the old selectors and passes after repair. This is one demonstrated feedback improvement;
-it is not evidence of higher reviewer recall or safe merge convergence. The execution record and
-remaining limits are appended to [REASSESSMENT.md](REASSESSMENT.md).
+Use the [witness replay helper](../skills/sol-simplify-review/README.md#replay-a-regression-and-feed-it-into-later-reviews)
+to turn a selected finding into a measured before/after contrast. The helper runs the same named
+assertion on both commits and only publishes a lead when it fails before and passes after. Add
+`"lessons": "/host/private/lessons/consumer"` to that consumer's entry, or set `REVIEW_LESSONS` for
+the poller. Subsequent reviews automatically receive those leads, including follow-ups. Failed
+replays publish no lead; a missing configured lesson directory is reported as an input error.
+
+Automatic work is PR discovery, bounded review execution, artifact preservation, lead harvesting,
+selected regression replay and reinjection. Humans select the causal question, implement the repair,
+assess whether a reproduction is relevant and an occurrence independent, and decide the merge.
+No scheduler or consumer configuration is silently installed by a replay. The demonstrated AOS
+facet regression and Node empty-selector failure witnesses are recorded in
+[REASSESSMENT.md](REASSESSMENT.md). This proves an executable feedback path, not a model-recall gain.
 
 `sol-simplify: this poller supplies consumer feedback; remove it when no configured consumer uses
 it.` To uninstall on macOS, boot out `gui/$(id -u)/dev.sol-simplify.review-dogfood` with `launchctl`

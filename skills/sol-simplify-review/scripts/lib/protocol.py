@@ -77,7 +77,11 @@ def hunk_markdown(rows):
 # Deliberately distinct from shell success: a recorded review is never a merge approval.
 RECORDED = 10
 FAILED = 5
+HANDOFF = 11
+MAX_ROUNDS = 3
 
 
-def review_exit(recorded):
-    return RECORDED if recorded else FAILED
+def review_exit(recorded, attempts=0):
+    if not recorded:
+        return FAILED
+    return HANDOFF if attempts >= MAX_ROUNDS else RECORDED

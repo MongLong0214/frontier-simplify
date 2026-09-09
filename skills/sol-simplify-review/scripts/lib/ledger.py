@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone
-from protocol import digest, protocol_sha256, require, Rejected
+from protocol import digest, protocol_sha256, require, Rejected, MAX_ROUNDS
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
@@ -219,4 +219,19 @@ def report(root, repo):
             print('  Legacy inventory detail was not recorded; inspect its artifact. No reason is inferred.')
     print(f'{len(starts)} attempts; {sum(bool(e.get("executed")) for e in ends.values())} executed. '
           'Safe merge completion is not measured by these receipts.')
+    print(f'Automatic review budget: {len(starts)}/{MAX_ROUNDS} attempts used; '
+          f'{max(0, MAX_ROUNDS - len(starts))} remaining. Failures and interruptions count.')
     return starts, ends
+
+
+def handoff(root, repo, head):
+    """A human-readable handoff; the preserved prose, never extracted statuses, carries findings."""
+    starts, ends = report(root, repo)
+    print(f'HANDOFF: requested head {head}; automatic review has stopped. No merge authorization.')
+    matching = [n for n, s in starts.items() if s['head_sha'] == head]
+    if not matching:
+        print('This head has not been reviewed. Earlier evidence is not a review of this head.')
+    print('Read the artifacts above with their execution failures and scope limitations. '
+          'Keep unresolved findings, repair regressions and newly discovered original blockers. '
+          'Assess closure and required product checks, then decide to merge, repair or split the change. '
+          'A new head, phase-1 restart or changed response does not replenish this PR budget.')

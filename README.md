@@ -164,13 +164,15 @@ Measured: no. Every skill run on the incident scenario fixed the root cause and 
 **Does it work on other models?**
 Unknown. It was written for and measured on `gpt-5.6-sol`, whose ambition tuning is what produces this failure mode. Results elsewhere are welcome.
 
-**Why no hooks, installer, or runtime code?**
-A tool against manufactured process should not manufacture process. The payload is one markdown file that agents pick up on their own; the only additions are static JSON manifests so `codex plugin add` and `/plugin install` work, and they run nothing.
+**Why is the core skill just Markdown?**
+The core `sol-simplify` skill is one Markdown file. The optional review skill also ships an explicitly
+invoked runner, regression replay and a local test hook; plugin installation alone starts no poller.
 
 ## License
 
 MIT
 
 Review assistance and evidence preservation: [runner guide](skills/sol-simplify-review/README.md).
-The review skill no longer claims automatic merge approval or two-round convergence; see the
+Automatic review stops after at most three attempts per PR and hands off unresolved work.
+It does not promise safe merge convergence. Regression replay supplies measured leads to later reviews; see the
 [consumer reassessment](dogfood/REASSESSMENT.md).

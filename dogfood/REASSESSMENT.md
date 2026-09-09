@@ -1,5 +1,8 @@
 # 리뷰 스킬과 도그푸딩 재판정 — 2026-09-09
 
+아래 첫 판정은 당시 실행의 역사로 보존한다. **후속 구현의 최종 방향, 3회 상한과 새 실증은
+이 문서 끝의 「3회 상한과 실행 가능한 되먹임」에 있다.**
+
 판정은 **결함 탐지 보조 도구로서는 효용이 있고, 두 라운드 수렴을 약속하는 자동 머지
 게이트로서는 유효하지 않다**이다. 이번 변경은 후자를 철회한다. Markdown 허용 문법을
 더 늘려 승인율을 올리는 것으로 문제를 해결했다고 선언하지 않는다. 현재 구현은 질문형
@@ -181,3 +184,127 @@ PR 하나를 머지까지 보내려면 확인된 실패를 같은 원인과 사�
 Markdown 계약의 검사이므로 이를 만족시키려고 승인 기능을 되살리지는 않았다. 새 버전으로
 훅을 갱신하는 명령도 `.git/hooks` 파일 쓰기 제한으로 `Operation not permitted: selftest.sh`가
 발생했다. 따라서 작업 내용은 stage했지만 커밋은 생성하지 못했다. 푸시는 시도하지 않았다.
+
+## 3회 상한과 실행 가능한 되먹임 — 후속 구현
+
+제품은 **최대 세 번 자동으로 실행하고 근거를 인계하는 리뷰 보조 도구**로 정했다.
+원일이 요구한 **안전한 머지 상태까지 최대 3라운드에 수렴하는 자동 게이트는 만들지 못했다.**
+대신 세 번 안에 자동 시도를 끝내는 기능을 구현했다. 종료와 결함 해소를 같은 뜻으로 쓰지 않는다.
+기존 재판정에서 철회한 산문 승인 게이트는 되살리지 않았다. 바꾼 결정은 무제한 후속 시도 허용과
+수동 재생에 머물던 되먹임이다.
+
+근거는 처음 재판정과 같다. 같은 봉인 head의 두 리뷰가 서로 다른 실제 blocker를 찾았고,
+수정이 새 회귀를 만들었다. 한 라운드의 남은 결함은 이전 결함에서 닫은 것을 뺀 뒤 새 회귀와
+새로 발견한 누락을 더한 것이다. 감소가 보장되지 않는다. inventory를 동결해도 수정 회귀를
+차단 집합에 계속 넣으면 단조 감소가 아니다. 그것까지 제외하면 알려진 결함을 머지한다.
+더구나 동결된 항목 하나조차 반드시 한 번의 수정으로 닫힌다는 전제가 없다. 기계 사실만으로
+결정하는 게이트는 가능하지만 그 사실이 제품 안전과 같지는 않다. 이미 있는 CI에 새 이름의
+승인 계층을 얹는 대신, 이 도구가 실제로 기여한 결함 탐지와 근거 재사용에 집중했다.
+
+상한은 `protocol.MAX_ROUNDS = 3`과 PR별 잠금 안의 원장 검사로 구현했다. 새 디렉터리와
+실행기를 만들기 전에 누적 `started` 수를 확인한다. 실패와 중단도 소비하며, head·base·응답·
+phase 변경은 초기화하지 않는다. 3회째 정상 기록은 exit 11과 인계, 증거 실패는 exit 5와 인계다.
+이후 호출은 exit 11로 원본 위치와 남은 사람의 판단을 보여주며 새 시도나 거부를 추가하지 않는다.
+기존 13회·6회·3회 원장도 추가 예산을 받지 않는다. 과거 결과를 새 승인으로 고쳐 쓰지 않는다.
+조회와 읽기 전용 재생은 계속 가능하다. 이는 안정된 PR ID·증거 root를 쓰는 협력적 호스트의
+실행 횟수 상한이다. 사람이 원장을 지우거나 ID를 바꾸는 것을 막는 보안 경계도, 벽시계 제한도,
+수동 수정 횟수 제한도 아니다. 설치된 스케줄러가 영원히 기다리는 실행을 종료한다는 보장도 없다.
+
+이 도구 자체가 머지를 막거나 허용하는 조건은 없다. 실제 머지는 기존 필수 제품 검사와
+maintainer 판단이 결정한다. 리뷰의 BLOCK 권고에는 재현된 미해결 결함, 수정 회귀, 뒤늦게 찾은
+원래 결함을 모두 남긴다. 필수 증거가 없으면 PASS를 권고하지 않는다. NIT, 문장 형식, 카탈로그
+반복 횟수, 세 번의 예산 소진은 제품 결함으로 승격하지 않는다. 요구 해석, 커버리지, 심각도,
+이의 제기, 종결 근거와 실제 통합 대상의 위험은 사람에게 남는다. 알려진 blocker를 새 이슈로
+밀어내서 상한을 만족했다고 표시하는 경로는 없다. 잃는 기능은 무제한 자동 재리뷰다.
+상한 뒤에도 남은 결함은 수동으로 고치고 검토하거나 변경을 나눠야 한다.
+
+도그푸딩의 새 `scripts/lib/witness.py`는 사람이 선택한 source review, 수정 전후 커밋,
+테스트 파일·정확한 이름·질문을 받는다. 수정 후 테스트 파일의 같은 바이트를 두 임시 clone에
+놓고 실행한다. Node 이벤트에서 해당 파일·이름의 유일한 테스트가 실제 assertion으로 실패한 뒤
+통과한 경우에만 `LEAD.md`를 만든다. 파일 wrapper, 무선택, skip, TODO, 로드·일반 실행 오류,
+timeout, 테스트 통과 뒤 프로세스 실패는 개선 증거가 아니다. 실패한 재생이 예전 성공을 그대로
+발행하지 못하도록 기존 출력 디렉터리를 재사용하지 않는다. 명령·이벤트·종료 값·테스트와 원본
+hash를 함께 남긴다. Node의 top-level `.mjs` 테스트만 지원하며 의존성 설치는 수행하지 않는다.
+다른 러너는 그 러너가 내는 개별 테스트 결과를 읽는 어댑터가 필요하다.
+
+소비자 설정의 `lessons` 또는 `REVIEW_LESSONS`로 선택한 디렉터리의 재생 질문은 이후 두 리뷰
+phase 모두에 자동으로 들어간다. 현재 PR의 후보 수집과 명시적 카탈로그도 함께 전달된다.
+poller는 발견·실행·기록·질문 재주입을 하고 exit 10/11을 완료로, 실행 실패를 오류로 구별한다.
+선택한 재생은 명령 하나로 자동 실행한다. 원문에서 인과 관계를 자동 판정하거나 수정 패치를
+작성하거나 상설 클래스 승격·머지를 하지는 않는다. 사람이 고른 질문이 이후 리뷰에 들어가는
+실행 가능한 학습 경로이며, 모델 스스로 탐지율을 높였다는 실험과는 구분한다. 이번 작업에서
+소비자 설정 변경이나 scheduler 설치는 하지 않았다.
+
+실행 기록은 `/tmp/sol-20260909-evidence/`에 남겼다. 원장 재생은 각 소비자 저장소와 원장
+디렉터리, 마지막 기록의 정확한 base·head를 `review-replay.sh`에 전달했다. 결과는 다음과 같다.
+
+```text
+AOS #649:   13 attempts; 10 executed; 9 preserved original reviews; exit 10
+ACP #804:    6 attempts;  5 executed; 5 preserved original reviews; exit 10
+Logic #830:  3 attempts;  3 executed; 3 preserved original reviews; exit 10
+Total:      22 attempts; 18 executed; 17 preserved original reviews
+Historical accepted inventories: 0. Phase-2 executions: 0.
+```
+
+입력의 21/17보다 #830 기록 하나가 더 있다. 당시 원장은 오류로 거부했지만 이벤트에는 연결
+복구 오류 뒤 `turn.completed`와 exit 0이 있다. 현재 재생기가 읽는 것은 복구된 실행 증거다.
+과거의 `accepted: false`는 그대로다. 같은 이유로 원장 leaf만 보고 종료 실패라 단정한 이번
+작업 중간 보고도 이벤트를 본 뒤 정정했다. 17은 완전한 리뷰나 승인 수가 아니다. 세 원장과
+그 증거 파일 196개를 작업 전후 전부 hash 비교해 추가·삭제·바이트 변경이 없음을 확인했다.
+
+`a319ef0`을 요청한 AOS 원장 재생은 exit 5, `replay-target: no attempt is bound to the
+requested base..head`였다. 마지막 원장은 `d85e68a`에 묶여 있다. `a319ef0`의 EN/KO 1965/1965,
+mutation 987 command-reachable + 31 library-pending, ECD 1.10.0은 사용자 제공 상태이며,
+이번에 전체 suite나 mutation을 재측정한 결과로 쓰지 않는다.
+
+대신 그 head의 실제 회귀 테스트 하나를 새 helper로 재생했다. source는 #649 round-0013
+원본이고 SHA-256은 `6b33dce1a599bb3673043a50356b61cf78da6f69d3f96120f556bf5aaf2d8351`이다.
+실행한 호출은 아래와 같다. 변수는 로컬 AOS 저장소와 해당 원본 경로를 가리킨다.
+
+```sh
+python3 skills/sol-simplify-review/scripts/lib/witness.py \
+  "$AOS_REPO" d85e68a a319ef0 tests/product/form-class.test.mjs \
+  'every cross-facet comparison is withheld until invariance evidence exists, for each declared facet' \
+  "$ROUND13_ARTIFACT" /tmp/sol-20260909-evidence/facet \
+  --lesson 'Does a test derive its expected domain from the implementation it is meant to challenge? Check independently named requirement values, including omitted values.'
+```
+
+```text
+Node: v22.23.2
+Before: d85e68a0c301076144344e37f63ccc0fc5f1ec98
+After:  a319ef0f60f6328f06072753c263b18fbe97ff2a
+Same test SHA-256: 39bf40603db23249748aaaedb9d76dbbe1d6b8a309bbaa76bbf25dde0a128d86
+before: test:fail, testCodeFailure, ERR_ASSERTION
+  Expected domain includes platform, domain_familiarity, administration_version; actual omits them.
+after: test:pass, skip=false, todo=false
+Witness replay exit: 0. LEAD.md produced.
+```
+
+이 실제 `LEAD.md`를 `REVIEW_LESSONS`로 주고 로컬 Git·가짜 PR metadata·stub reviewer로
+실제 `review-pr.sh`를 실행했다. 반환은 10, 생성된 prompt에 질문 파일의 전체 본문이 그대로
+들어갔다(`feedback-delivery/result.txt`: `Actual replay lead delivered byte-for-byte: True`).
+이는 소비자 실패 → 같은 테스트의 전후 차이 → 질문 생성 → 다음 리뷰 입력까지의 실증이다.
+원래 발견을 카탈로그가 유발했는지, 새 질문이 모델의 탐지율을 높이는지는 측정하지 않았다.
+
+같은 AOS `a319ef0`의 테스트 파일에 `--test-name-pattern=THIS_WITNESS_DOES_NOT_EXIST`를
+주고 Node TAP 실행도 별도로 보존했다. exit 0, `# tests 1`, `# pass 1`, `# fail 0`이 나왔다.
+wrapper 이름은 `tests/product/form-class.test.mjs`였다. 새 helper에 동일한 없는 이름을 주면
+`GUARD FAIL [witness-selection] expected exactly one result for the named test in its file`로
+거부했다. pass 개수 검사로 약화하지 않았고, 이 사례를 실제 Node 실행 selftest에도 넣었다.
+
+최종 `./skills/sol-simplify-review/scripts/selftest.sh`는 **164 통과, 0 실패**다. 시작점은
+127/0이었다. 기존 테스트의 기대와 실행 위치 일부를 새 상한에 맞췄다. 세 번째 실행이 계속 기록 상태에
+머물던 기대는 terminal handoff 기대가 됐고, base·역방향 head·응답 테스트는 예산이 남은 별도
+PR에서 원래 실패 원인을 계속 검사한다. 폐기한 보호 검사는 없다. 새 실패 witness에는 4회째
+실행 시도, phase 재시작, 실패·중단 예산 우회, BLOCKER가 남은 세 번째 인계, base를 무시하는
+cache, 없는 질문 디렉터리, 무선택·skip·TODO·로드 오류·timeout·중복 이름·종료 오류, 거꾸로 된
+수정·동일 head·변경된 테스트 바이트·stale 출력 재사용이 포함된다. poller의 10/11/5/예상 밖 0
+처리와 질문 전달도 실행했다. prompt 두 heading의 첫 fence와 placeholder 계약을 유지했고,
+두 phase의 실제 렌더 및 누락 placeholder 실패를 검사했다. skill frontmatter 검사와
+`git diff --check`도 통과했다.
+
+원본 작업공간에서는 명시한 15개 파일만 stage하는 `git add`가
+`.git/index.lock: Operation not permitted`로 거부됐다. 원래 main은 `4732565` 그대로이고
+파일 변경은 워킹트리에 보존된다. `.git/hooks`를 수정하거나 권한 우회를 하지 않았다.
+전달용 커밋은 쓰기 가능한 임시 clone에서 만들며, 원래 main에 적용된 커밋으로 보고하지 않는다.
+원본 훅을 통한 커밋 검증도 실행되지 않았다. 푸시는 하지 않는다.

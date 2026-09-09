@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown,
-                      protocol_sha256, review_exit, FAILED)
+                      protocol_sha256, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
 import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -78,6 +78,9 @@ def main():
                     'than starting a second one, which would write into its events stream')
         starts, ends, originals = ledger.audit(root, repo)
         head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
+        if len(starts) >= MAX_ROUNDS:
+            ledger.handoff(root, repo, head)
+            return HANDOFF
         phase = int(a.phase)
         n = len(starts) + 1
         d = root / f'round-{n:04}'
@@ -134,6 +137,7 @@ def main():
             freeze(d / 'CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', base, head))
             inputs += ['DIFF.patch', 'CHANGED.txt']
             values = {'REPOSITORY': os.environ.get('REVIEW_REPOSITORY_NAME') or str(repo), 'BASE_SHA': base,
+                      'ATTEMPT_NUMBER': str(n), 'MAX_ROUNDS': str(MAX_ROUNDS),
                       'ROUND1_HEAD_SHA': head if phase == 1 else start['round1_head_sha'],
                       'ROUND2_HEAD_SHA': head, 'TRUSTED_INVENTORY_SHA256': start.get('inventory_sha256', ''),
                       'INVENTORY_INTEGRITY_RESULT': 'VERIFIED',
@@ -225,7 +229,9 @@ def main():
                     print(check['reason'], file=sys.stderr)
             print(f'review: {"RECORDED" if recorded else "FAILED"} artifact {d / "ARTIFACT.md"}; '
                   'maintainer must assess the evidence; no automatic merge approval')
-            return review_exit(recorded)
+            if n == MAX_ROUNDS:
+                ledger.handoff(root, repo, head)
+            return review_exit(recorded, n)
         except (Rejected, OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
             reason = str(e).replace('\n', '; ')
             if not started:
@@ -237,6 +243,8 @@ def main():
                                  'recorded': False, 'reason': reason,
                                  'outputs': ledger.hashes(d, output_names)})
             print(reason, file=sys.stderr)
+            if n == MAX_ROUNDS:
+                ledger.handoff(root, repo, head)
             return FAILED
         finally:
             if clone:

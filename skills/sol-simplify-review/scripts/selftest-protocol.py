@@ -15,6 +15,7 @@ import ledger
 import protocol
 import catalog
 import replay
+import witness
 from protocol import Rejected, digest, hunks
 from portability import check as portability
 
@@ -125,18 +126,41 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
           lambda: (root / 'round-0002/REMEDIATION.patch').read_bytes() == protocol.git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', h1, h2))
     events(t / 'events', 'F-2 CLOSED. Required tests passed. PASS recommendation for maintainer review.')
     r3 = host('2', h2)
-    check('third-attempt-needs-no-escape-form', True, lambda: r3.returncode == 10 and '[round-budget]' not in r3.stderr)
+    check('third-attempt-ends-in-handoff', True, lambda: r3.returncode == 11 and 'HANDOFF' in r3.stdout)
     check('later-open-finding-carried-forward', True,
           lambda: 'F-2 OPEN' in (root / 'round-0003/PREVIOUS_REVIEW.md').read_text())
     check('pass-followup-never-merge-success', True, lambda: r3.returncode != 0)
     check('round-numbers-survive-followup', True, lambda: len(ledger.audit(root, repo)[0]) == 3)
-    check('changed-base-needs-scope-review', True, lambda: '[scope-change]' in host('2', h2, target=h1).stderr)
-    check('backwards-remediation-refused', True, lambda: '[ancestry]' in host('2', base).stderr)
+    limited_bytes = (root / 'ledger.jsonl').read_bytes()
+    # Missing stub input would fail if any forbidden invocation reached an executor.
+    for phase, head in [('2', h2), ('1', h2), ('1', base)]:
+        stopped = host(phase, head, environment=dict(env, REVIEW_STUB=str(t / 'absent-events')))
+        check(f'budget-stops-{phase}-{head[:7]}', True,
+              lambda: stopped.returncode == 11 and 'HANDOFF' in stopped.stdout
+              and (root / 'ledger.jsonl').read_bytes() == limited_bytes
+              and not (root / 'round-0004').exists())
+    events(t / 'events', 'PASS', tools=False)
+    failures = [host('1', pr='failed-budget') for _ in range(3)]
+    check('failed-attempts-consume-budget', True,
+          lambda: all(p.returncode == 5 for p in failures) and 'HANDOFF' in failures[-1].stdout
+          and host('1', pr='failed-budget').returncode == 11)
+    interrupted = root_for('interrupted-budget')
+    interrupted.mkdir(parents=True)
+    for i in range(1, 4):
+        ledger.append(interrupted, dict(event='started', round=i, phase=1, head_sha=h1, base_sha=base, inputs={}))
+    check('interruptions-consume-budget', True,
+          lambda: host('1', pr='interrupted-budget').returncode == 11
+          and len(ledger.read(interrupted)) == 3)
+    events(t / 'events', original)
+    host('1', pr='scope')
+    check('changed-base-needs-scope-review', True, lambda: '[scope-change]' in host('2', h2, 'scope', target=h1).stderr)
+    check('backwards-remediation-refused', True, lambda: '[ancestry]' in host('2', base, 'scope').stderr)
     events(t / 'events', original)
     check('invalid-base-refused', True, lambda: '[ancestry]' in host('1', base, 'badbase', target=h2).stderr)
     (t / 'response').write_text('F-1: repaired both readers. Focused tests passed.')
     events(t / 'events', 'Follow-up with a response, still a recommendation only.')
-    check('prose-response-is-carried', True, lambda: host('2', h2, environment=dict(env, REVIEW_RESPONSE=str(t / 'response'))).returncode == 10)
+    host('1', pr='response')
+    check('prose-response-is-carried', True, lambda: host('2', h2, pr='response', environment=dict(env, REVIEW_RESPONSE=str(t / 'response'))).returncode == 10)
     check('report-does-not-claim-escape-rate', True,
           lambda: 'Safe merge completion is not measured' in host('report').stdout and 'escape rate:' not in host('report').stdout)
     check('report-does-not-create-evidence', True,
@@ -309,6 +333,10 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     metadata.write_text(json.dumps({'number': 42, 'headRefOid': h1, 'baseRefOid': base, 'url': 'fixture'}))
     prenv = dict(env, PATH=str(fakebin) + os.pathsep + env['PATH'], TEST_PR_METADATA=str(metadata))
     events(t / 'events', original + '- catalog_candidate: retained lead -- recurs\n')
+    lessons = t / 'lessons'
+    (lessons / 'measured').mkdir(parents=True)
+    (lessons / 'measured/LEAD.md').write_text('Host-selected reproduced question: check the independently named facet.\n')
+    prenv['REVIEW_LESSONS'] = str(lessons)
     def pr():
         return cmd(SCRIPTS / 'review-pr.sh', repo, '42', 'auto', 'stub', env=prenv)
     check('consumer-runs-first-review', True, lambda: 'round 1, phase 1' in pr().stderr)
@@ -318,6 +346,34 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     events(t / 'events', 'PASS recommendation. F-1 independently checked CLOSED.')
     check('consumer-changed-head-enters-followup', True, lambda: 'round 2, phase 2' in pr().stderr)
     check('consumer-pass-never-merge-success', True, lambda: pr().returncode == 10)
+    consumer_roots = list((t / 'artifacts/consumers').glob('*/repository'))
+    mirror = consumer_roots[0]
+    consumer_root = Path(cmd(SCRIPTS / 'review-round.sh', 'path', mirror, h2, '42', env=prenv).stdout.strip())
+    check('replayed-lead-reaches-both-prompt-phases', True,
+          lambda: all('check the independently named facet' in (consumer_root / f'round-{n:04}/prompt.txt').read_text()
+                      for n in (1, 2)))
+    metadata.write_text(json.dumps({'number': 42, 'headRefOid': special, 'baseRefOid': base, 'url': 'fixture'}))
+    events(t / 'events', 'F-NEW BLOCKER: the latest repair still breaks a sibling. Required platform unavailable.')
+    last = pr()
+    check('consumer-third-round-retains-blocker-and-hands-off', True,
+          lambda: last.returncode == 11 and 'F-NEW BLOCKER' in (consumer_root / 'round-0003/ARTIFACT.md').read_text())
+    metadata.write_text(json.dumps({'number': 42, 'headRefOid': h1, 'baseRefOid': base, 'url': 'fixture'}))
+    cached_limit = pr()
+    check('consumer-new-head-cannot-reset-budget', True,
+          lambda: cached_limit.returncode == 11 and 'round 4, phase' not in cached_limit.stderr
+          and len(ledger.audit(consumer_root, mirror)[0]) == 3)
+    metadata.write_text(json.dumps({'number': 43, 'headRefOid': h2, 'baseRefOid': base, 'url': 'fixture'}))
+    events(t / 'events', original)
+    cmd(SCRIPTS / 'review-pr.sh', repo, '43', 'auto', 'stub', env=prenv)
+    metadata.write_text(json.dumps({'number': 43, 'headRefOid': h2, 'baseRefOid': h1, 'url': 'fixture'}))
+    changed_target = cmd(SCRIPTS / 'review-pr.sh', repo, '43', 'auto', 'stub', env=prenv)
+    check('consumer-cache-cannot-hide-base-change', True,
+          lambda: changed_target.returncode == 5 and '[scope-change]' in changed_target.stderr)
+    missing_lessons = cmd(SCRIPTS / 'review-pr.sh', repo, '43', 'auto', 'stub',
+                          env=dict(prenv, REVIEW_LESSONS=str(t / 'missing-lessons')))
+    check('consumer-missing-lesson-directory-is-not-empty-evidence', True,
+          lambda: missing_lessons.returncode != 10 and '[consumer]' in missing_lessons.stderr
+          and 'REVIEW_LESSONS directory is missing' in missing_lessons.stderr)
     (t / 'events').write_text('{"type":"result","subtype":"error_during_execution","is_error":true}\n')
     check('executor-error-result-rejected', True,
           lambda: cmd(sys.executable, SCRIPTS / 'lib/events.py', 'completed', t / 'events').returncode != 0)
@@ -327,6 +383,99 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     (t / 'events').write_text('{"type":"turn.completed"}\n{"type":"turn.started"}\n')
     check('executor-earlier-turn-not-completion', True,
           lambda: cmd(sys.executable, SCRIPTS / 'lib/events.py', 'completed', t / 'events').returncode != 0)
+    # These execute Node itself: an empty selector can report a passing file wrapper on Node 22.
+    node_repo = t / 'node-witness'
+    node_repo.mkdir()
+    probe = node_repo / 'probe.test.mjs'
+    preamble = 'import test from "node:test"; import assert from "node:assert/strict";\n'
+    def named_case(label, body, name='named witness', timeout=10):
+        probe.write_text(preamble + body)
+        output = t / label
+        output.mkdir()
+        return witness.run_named(node_repo, probe.name, name, output, timeout)
+    check('named-witness-passes', True,
+          lambda: named_case('node-pass', 'test("named witness", () => assert.equal(1,1));') == 'PASS')
+    check('named-witness-assertion-fails', True,
+          lambda: named_case('node-fail', 'test("named witness", () => assert.equal(1,2));') == 'ASSERTION_FAILED')
+    check('named-witness-regexp-punctuation-is-literal', True,
+          lambda: named_case('node-literal', 'test("named (a|b).$", () => assert.ok(true));', 'named (a|b).$') == 'PASS')
+    check('named-witness-wrapper-pass-is-not-selection', False,
+          lambda: named_case('node-empty', 'test("different name", () => assert.fail());'), 'witness-selection')
+    check('named-witness-live-alternative-cannot-hide-missing-name', False,
+          lambda: named_case('node-alternative', 'test("named witness", () => assert.ok(true));', 'named witness|missing'), 'witness-selection')
+    check('named-witness-skip-is-not-execution', False,
+          lambda: named_case('node-skip', 'test("named witness", {skip:true}, () => assert.fail());'), 'witness-selection')
+    check('named-witness-todo-is-not-execution', False,
+          lambda: named_case('node-todo', 'test("named witness", {todo:true}, () => assert.fail());'), 'witness-selection')
+    check('named-witness-load-error-is-not-kill', False,
+          lambda: named_case('node-load', 'throw new Error("load failure");'), 'witness-selection')
+    check('named-witness-runtime-error-is-not-assertion', False,
+          lambda: named_case('node-error', 'test("named witness", () => { throw new Error("environment failure"); });'), 'witness-assertion')
+    check('named-witness-timeout-is-not-kill', False,
+          lambda: named_case('node-timeout', 'test("named witness", async () => { await new Promise(r => setTimeout(r, 10000)); });', timeout=0.1), 'witness-timeout')
+    check('named-witness-duplicate-name-is-ambiguous', False,
+          lambda: named_case('node-duplicate', 'test("named witness", () => {}); test("named witness", () => {});'), 'witness-selection')
+    check('named-witness-late-process-error-is-not-pass', False,
+          lambda: named_case('node-late-error', 'test("named witness", () => {}); process.on("exit", () => {process.exitCode=1;});'), 'witness-process')
+    # A measured contrast, not a status file, publishes a review lead.
+    git(node_repo, 'init', '-q')
+    git(node_repo, 'config', 'user.name', 'test')
+    git(node_repo, 'config', 'user.email', 'test@example.invalid')
+    probe.write_text(preamble + 'import { value } from "./value.mjs"; test("named witness", () => assert.equal(value, 2));')
+    (node_repo / 'value.mjs').write_text('export const value = 1;')
+    git(node_repo, 'add', probe.name, 'value.mjs')
+    git(node_repo, 'commit', '-qm', 'broken behavior')
+    broken = git(node_repo, 'rev-parse', 'HEAD')
+    (node_repo / 'value.mjs').write_text('export const value = 2;')
+    git(node_repo, 'add', 'value.mjs')
+    git(node_repo, 'commit', '-qm', 'repair')
+    fixed = git(node_repo, 'rev-parse', 'HEAD')
+    source = t / 'source-review.md'
+    source.write_text('F-1: named witness reproduces the wrong value.')
+    replay_args = (node_repo, broken, fixed, probe.name, 'named witness', source, 'Check the independently expected value.')
+    check('witness-replay-publishes-observed-contrast', True,
+          lambda: 'named assertion failed before and passed after' in witness.replay(*replay_args, t / 'observed'))
+    check('witness-replay-reversed-repair-does-not-publish', False,
+          lambda: witness.replay(node_repo, fixed, broken, probe.name, 'named witness', source, 'Question', t / 'reversed'), 'witness-contrast')
+    check('witness-replay-failure-leaves-no-lead', True, lambda: not (t / 'reversed/LEAD.md').exists())
+    check('witness-replay-cannot-reuse-stale-success-directory', False,
+          lambda: witness.replay(*replay_args, t / 'observed'))
+    check('witness-replay-same-head-is-not-contrast', False,
+          lambda: witness.replay(node_repo, fixed, fixed, probe.name, 'named witness', source, 'Question', t / 'same'), 'witness-target')
+    check('witness-replay-refuses-consumer-output', False,
+          lambda: witness.replay(*replay_args, node_repo / 'output'), 'witness-location')
+    check('witness-replay-refuses-escaping-test', False,
+          lambda: witness.replay(node_repo, broken, fixed, '../probe.mjs', 'name', source, 'Question', t / 'escape'), 'witness-path')
+    check('witness-replay-refuses-empty-lesson', False,
+          lambda: witness.replay(node_repo, broken, fixed, probe.name, 'named witness', source, '', t / 'no-lesson'), 'witness-input')
+    check('witness-replay-source-checkout-untouched', True,
+          lambda: git(node_repo, 'status', '--porcelain') == '' and git(node_repo, 'rev-parse', 'HEAD') == fixed)
+    probe.write_text(preamble + 'import { writeFileSync } from "node:fs"; '
+                    'test("named witness", () => { writeFileSync(new URL(import.meta.url), "changed"); assert.fail("probe"); });')
+    git(node_repo, 'add', probe.name)
+    git(node_repo, 'commit', '-qm', 'self-changing witness')
+    changing = git(node_repo, 'rev-parse', 'HEAD')
+    check('witness-replay-rejects-test-byte-changes', False,
+          lambda: witness.replay(node_repo, broken, changing, probe.name, 'named witness', source, 'Question', t / 'changing'), 'witness-bytes')
+    # The poller distinguishes an expected handoff from a child execution error.
+    poller_source = SCRIPTS.parents[2] / 'dogfood/run.py'
+    if poller_source.exists():
+        poller = t / 'poller'
+        (poller / 'dogfood').mkdir(parents=True)
+        shutil.copyfile(poller_source, poller / 'dogfood/run.py')
+        poll_runner = poller / 'skills/sol-simplify-review/scripts/review-pr.sh'
+        poll_runner.parent.mkdir(parents=True)
+        poll_runner.write_text('#!/bin/sh\nprintf "%s" "$REVIEW_LESSONS" > "$TEST_LESSON_PATH"\nexit "$TEST_CHILD_STATUS"\n')
+        poll_runner.chmod(0o755)
+        poll_config = poller / 'consumers.json'
+        poll_config.write_text(json.dumps({'consumers': [{'repository': str(repo), 'lessons': str(lessons)}]}))
+        metadata.write_text('[{"number":42}]')
+        poll_env = dict(prenv, REVIEW_CONSUMERS_CONFIG=str(poll_config), TEST_LESSON_PATH=str(poller / 'received'))
+        for child, expected in [(10, 0), (11, 0), (5, 1), (0, 1)]:
+            check(f'poller-classifies-child-{child}', True,
+                  lambda child=child, expected=expected: cmd(sys.executable, poller / 'dogfood/run.py',
+                      env=dict(poll_env, TEST_CHILD_STATUS=str(child))).returncode == expected)
+        check('poller-delivers-consumer-lessons', True, lambda: (poller / 'received').read_text() == str(lessons))
     # Fingerprint changes cover the code that judges evidence as well as prompt text.
     version = t / 'version'
     shutil.copytree(SCRIPTS, version / 'scripts', ignore=shutil.ignore_patterns('__pycache__'))

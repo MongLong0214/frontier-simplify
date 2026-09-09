@@ -15,9 +15,12 @@ for consumer in json.loads(config.read_text())['consumers']:
     try:
         prs = json.loads(subprocess.check_output(['gh', 'pr', 'list', '--state', 'open', '--json', 'number'], cwd=repo))
         for pr in prs:
-            p = subprocess.run([str(runner), repo, str(pr['number']), 'auto'])
-            # 10 means evidence was recorded, never that the PR may merge.
-            failed |= p.returncode not in {0, 10}
+            env = dict(os.environ)
+            if consumer.get('lessons'):
+                env['REVIEW_LESSONS'] = consumer['lessons']
+            p = subprocess.run([str(runner), repo, str(pr['number']), 'auto'], env=env)
+            # A budget handoff is terminal, not an infrastructure error or approval.
+            failed |= p.returncode not in {10, 11}
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
         print(f'dogfood: {repo}: {e}', file=sys.stderr)
         failed = True
