@@ -72,7 +72,7 @@ cmd_seal() {
   inv=$(sha256 "$out/inventory.txt")
 
   cat > "$out/SEAL.txt" <<EOF
-schema: sol-simplify-review-seal.v1
+schema: frontier-simplify-review-seal.v1
 repo: $(git -C "$repo" rev-parse --show-toplevel)
 base_sha: $base
 head_sha: $head

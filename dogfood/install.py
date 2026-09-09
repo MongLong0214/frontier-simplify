@@ -16,7 +16,7 @@ a = p.parse_args()
 if a.interval <= 0:
     p.error('--interval must be positive')
 here = Path(__file__).resolve().parent
-label = 'dev.sol-simplify.review-dogfood'
+label = 'dev.frontier-simplify.review-dogfood'
 path = Path.home() / 'Library/LaunchAgents' / (label + '.plist')
 try:
     a.artifacts = a.artifacts.expanduser().resolve()
@@ -36,6 +36,11 @@ try:
                       'EnvironmentVariables': env,
                       'StandardOutPath': str(a.artifacts / 'dogfood.log'),
                       'StandardErrorPath': str(a.artifacts / 'dogfood.err')}, f)
+    legacy = path.with_name('dev.sol-simplify.review-dogfood.plist')
+    if legacy.exists():
+        subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}/dev.sol-simplify.review-dogfood'],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        legacy.rename(legacy.with_suffix('.plist.disabled'))
     subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}/{label}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(path)], check=True)
     print(f'dogfood: installed {path}')

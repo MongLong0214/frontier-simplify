@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# sol-simplify-audit: deterministic measurements over a git repository.
+# frontier-simplify-audit: deterministic measurements over a git repository.
 # Arithmetic only — deciding WHICH paths are machinery vs product is the
 # agent's judgment, passed in as the two regexes. Nothing is pinned; every
 # number is computed fresh from the tree and history at HEAD.
@@ -33,7 +33,7 @@ REFUSE=$(git log --format='%s' \
 
 PCT=$(awk -v n="$LOOP" -v t="$TOTAL" 'BEGIN { printf "%.1f", t ? n * 100 / t : 0 }')
 
-echo "== sol-simplify-audit: measured at $(git rev-parse --short HEAD) =="
+echo "== frontier-simplify-audit: measured at $(git rev-parse --short HEAD) =="
 echo "ceremony ratio : ${M_LOC} machinery LOC : ${P_LOC} product LOC"
 echo "candidate loop commits : ${LOOP} of ${TOTAL} (${PCT}%) — subject-line heuristic; confirm with diffs before claiming they shipped nothing"
 echo "self-refusal   : ${REFUSE} commit subjects mention refusing/blocking"

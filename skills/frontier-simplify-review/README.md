@@ -1,5 +1,9 @@
 # Running a review
 
+Frontier-simplify review is built for frontier coding agents including Fable and Astra
+(`gpt-6-astra`). Choose an executor/model available on your host; intended use is not a measured
+claim of safe merge convergence on either model.
+
 [SKILL.md](SKILL.md) owns the question-led prompts and review recommendations. The runner preserves
 execution evidence and exact Git targets. It does **not** turn a Markdown verdict into merge
 permission. Bash, Git and Python 3.9+ are required; live runs also need a repository-capable executor.
@@ -69,7 +73,10 @@ reproductions, closure, and integration risk on the actual merge target.
 ## Evidence and trust
 
 `REVIEW_ARTIFACTS` selects a host directory outside the consumer checkout, defaulting to
-`~/.sol-simplify-review`. Each attempt has frozen inputs, the exact final reviewer message in
+`~/.frontier-simplify-review` for new installations. If `~/.sol-simplify-review` exists, its location
+continues to be used so existing PR identities, locks and attempt budgets stay intact. An explicit
+`REVIEW_ARTIFACTS` still takes precedence; do not change it merely to rename the product.
+Each attempt has frozen inputs, the exact final reviewer message in
 `ARTIFACT.md`, the event stream, process status, checks and hashes. A local disposable clone keeps the
 consumer checkout untouched. No script pushes, posts reviews or merges.
 
@@ -207,5 +214,5 @@ open findings, cached status and the absence of an automatic approval path. They
 reviewer recall or safe merge completion. The [reassessment](../../dogfood/REASSESSMENT.md) explains
 why the Markdown gates and their tests were retired.
 
-`sol-simplify: keep the hook while maintaining this runner; remove it when the runner is no longer
+`frontier-simplify: keep the hook while maintaining this runner; remove it when the runner is no longer
 maintained here, restoring pre-commit.before-review if present.`

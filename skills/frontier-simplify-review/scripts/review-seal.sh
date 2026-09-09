@@ -42,7 +42,7 @@ case "${1-}" in
       exit 1
     }
 
-    echo "review_protocol=sol-simplify-review-v1"
+    echo "review_protocol=frontier-simplify-review-v1"
     echo "inventory_sha256=$(sha256_file "$inventory")"
     echo "base_sha=$base"
     echo "round1_head_sha=$round1"

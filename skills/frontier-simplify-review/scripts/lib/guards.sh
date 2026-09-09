@@ -78,12 +78,12 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     # So the command side is matched on the name, the output side only on this seal's own
     # contents and its own path.
     hit = None
-    for probe in ("SEAL.txt", "sol-simplify-review-seal", "target_sha256"):
+    for probe in ("SEAL.txt", "frontier-simplify-review-seal", "sol-simplify-review-seal", "target_sha256"):
         if probe in issued:
             hit = probe
             break
     if hit is None:
-        for probe in ("sol-simplify-review-seal", "target_sha256", seal_marker):
+        for probe in ("frontier-simplify-review-seal", "sol-simplify-review-seal", "target_sha256", seal_marker):
             if probe and probe in received:
                 hit = probe
                 break

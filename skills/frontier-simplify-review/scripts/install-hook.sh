@@ -14,10 +14,11 @@ try:
     hooks = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', '--git-path', 'hooks']).decode().strip()
     hooks = (repo / hooks).resolve()
     hooks.mkdir(parents=True, exist_ok=True)
-    trusted = hooks / 'sol-simplify-review'
+    trusted = hooks / 'frontier-simplify-review'
     hook = hooks / 'pre-commit'
     previous = hooks / 'pre-commit.before-review'
-    if hook.exists() and 'sol-simplify-review installed hook' not in hook.read_text():
+    if hook.exists() and not any(marker in hook.read_text() for marker in (
+            'frontier-simplify-review installed hook', 'sol-simplify-review installed hook')):
         if previous.exists():
             sys.exit('review-hook: existing hook backup already exists; resolve the two hooks before installing')
         shutil.copy2(hook, previous)
@@ -38,7 +39,7 @@ try:
     host = shlex.quote(str(trusted))
     before = shlex.quote(str(previous))
     hook.write_text(f'''#!/bin/sh
-# sol-simplify-review installed hook
+# frontier-simplify-review installed hook
 set -eu
 # stdin closed: git leaves it open for the hook, and a suite this spawns then waits on a
 # descriptor nobody will write to. Measured: the driver returns in under a second when run

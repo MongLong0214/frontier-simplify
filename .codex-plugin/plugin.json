@@ -1,26 +1,30 @@
 {
-  "name": "sol-simplify",
-  "version": "1.2.1",
-  "description": "Stops an agent from manufacturing process around its own work: invented gates, approval flows, verification machinery, and governance documents nobody asked for.",
+  "name": "frontier-simplify",
+  "version": "2.0.0",
+  "description": "Frontier-simplify for Fable and Astra (gpt-6-astra): cut invented process, preserve product work, and bound repeated code reviews.",
   "author": {
     "name": "MongLong0214",
     "url": "https://github.com/MongLong0214"
   },
-  "homepage": "https://github.com/MongLong0214/sol-simplify",
-  "repository": "https://github.com/MongLong0214/sol-simplify",
+  "homepage": "https://github.com/MongLong0214/frontier-simplify",
+  "repository": "https://github.com/MongLong0214/frontier-simplify",
   "license": "MIT",
   "keywords": [
     "over-engineering",
     "yagni",
     "process",
     "governance",
-    "productivity"
+    "productivity",
+    "fable",
+    "astra",
+    "gpt-6-astra",
+    "code-review"
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "sol-simplify",
-    "shortDescription": "Cuts the bureaucracy agents build around their own work",
-    "longDescription": "Keep useful product work and remove invented process. Optional review assistance preserves findings and bounds repeated automatic reviews without authorizing merges.",
+    "displayName": "Frontier-simplify",
+    "shortDescription": "Less invented process and repeated review for Fable and Astra",
+    "longDescription": "Built for Fable and Astra (gpt-6-astra), with model-independent skills that preserve useful product work. Optional review assistance preserves findings and bounds repeated automatic reviews without authorizing merges. Intended use does not establish benchmark performance on every model.",
     "defaultPrompt": [
       "Review this change and preserve actionable findings."
     ],
@@ -29,6 +33,6 @@
     "capabilities": [
       "Instructions"
     ],
-    "websiteURL": "https://github.com/MongLong0214/sol-simplify"
+    "websiteURL": "https://github.com/MongLong0214/frontier-simplify"
   }
 }

@@ -595,6 +595,27 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
     spec = importlib.util.spec_from_file_location('test_runner', SCRIPTS / 'lib/run-review.py')
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
+    # Branding must not buy another three attempts by silently selecting a new history root.
+    migration_home = (t / 'migration-home').resolve()
+    migration_home.mkdir()
+    migration_env = {k: v for k, v in env.items() if k != 'REVIEW_ARTIFACTS'}
+    with patch.dict(os.environ, migration_env, clear=True), patch.object(Path, 'home', return_value=migration_home):
+        fresh_root = runner.root_for(repo, '17')
+        check('new-install-uses-frontier-history-root', True,
+              lambda: fresh_root.parent.parent == migration_home / '.frontier-simplify-review')
+        legacy_root = migration_home / '.sol-simplify-review'
+        legacy_root.mkdir()
+        retained_root = legacy_root / fresh_root.parent.name / '17'
+        shutil.copytree(root, retained_root)
+        history_bytes = (retained_root / 'ledger.jsonl').read_bytes()
+        check('rename-reuses-legacy-history-root', True, lambda: runner.root_for(repo, '17') == retained_root)
+        result = runner.main(['auto', str(repo), h2, '17', base, 'stub'])
+        check('rename-preserves-exhausted-budget-and-receipt-bytes', True,
+              lambda: result == 11 and (retained_root / 'ledger.jsonl').read_bytes() == history_bytes
+              and not (fresh_root / 'round-0001').exists())
+        fresh_root.parent.parent.mkdir(exist_ok=True)
+        check('legacy-history-still-wins-if-new-root-also-exists', True,
+              lambda: runner.root_for(repo, '17') == retained_root)
     real_popen = subprocess.Popen
     def missing_cli(command, *args, **kwargs):
         if command[0] == 'codex':
@@ -703,7 +724,7 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
         poller = t / 'poller'
         (poller / 'dogfood').mkdir(parents=True)
         shutil.copyfile(poller_source, poller / 'dogfood/run.py')
-        poll_runner = poller / 'skills/sol-simplify-review/scripts/review-pr.sh'
+        poll_runner = poller / 'skills/frontier-simplify-review/scripts/review-pr.sh'
         poll_runner.parent.mkdir(parents=True)
         poll_runner.write_text('#!/bin/sh\nprintf "%s" "$REVIEW_LESSONS" > "$TEST_LESSON_PATH"\nexit "$TEST_CHILD_STATUS"\n')
         poll_runner.chmod(0o755)
@@ -727,18 +748,26 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
         # Exercise the installer without touching launchd or this user's LaunchAgents.
         installer = poller_source.with_name('install.py')
         launch_home = t / 'launch-home'
+        legacy_launch = launch_home / 'Library/LaunchAgents/dev.sol-simplify.review-dogfood.plist'
+        legacy_launch.parent.mkdir(parents=True)
+        legacy_launch.write_bytes(b'legacy poller configuration')
         install_env = dict(env, REVIEW_CONSUMERS_CONFIG=str(poll_config),
                            REVIEW_EXECUTOR='claude', REVIEW_CODEX_MODEL='selected-model', REVIEW_TIMEOUT='90')
         with patch.dict(os.environ, install_env, clear=True), patch.object(Path, 'home', return_value=launch_home), \
                 patch.object(sys, 'argv', [str(installer), '--interval', '60', '--artifacts', 'relative-artifacts']), \
-                patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+                patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as launchctl_calls:
             previous_cwd = Path.cwd()
             try:
                 os.chdir(t)
                 runpy.run_path(str(installer), run_name='__main__')
             finally:
                 os.chdir(previous_cwd)
-        launch = plistlib.loads((launch_home / 'Library/LaunchAgents/dev.sol-simplify.review-dogfood.plist').read_bytes())
+        launch = plistlib.loads((launch_home / 'Library/LaunchAgents/dev.frontier-simplify.review-dogfood.plist').read_bytes())
+        check('installer-disables-legacy-poller-and-preserves-config', True,
+              lambda: not legacy_launch.exists()
+              and legacy_launch.with_suffix('.plist.disabled').read_bytes() == b'legacy poller configuration'
+              and launchctl_calls.call_args_list[0].args[0] == [
+                  'launchctl', 'bootout', f'gui/{os.getuid()}/dev.sol-simplify.review-dogfood'])
         check('installer-preserves-selected-config-and-executor', True,
               lambda: all(launch['EnvironmentVariables'].get(k) == install_env[k] for k in
                           ('REVIEW_EXECUTOR', 'REVIEW_CODEX_MODEL', 'REVIEW_TIMEOUT'))
@@ -763,7 +792,7 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
     git(hookrepo, 'init', '-q')
     git(hookrepo, 'config', 'user.name', 'test')
     git(hookrepo, 'config', 'user.email', 'test@example.invalid')
-    candidate = hookrepo / 'skills/sol-simplify-review/scripts'
+    candidate = hookrepo / 'skills/frontier-simplify-review/scripts'
     candidate.mkdir(parents=True)
     (candidate / 'selftest.sh').write_text('#!/bin/sh\nexit 0\n')
     (candidate / 'probe.sh').write_text('#!/bin/sh\necho reject\n')
@@ -771,7 +800,7 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
     git(hookrepo, 'commit', '-qm', 'seed')
     installed = cmd(SCRIPTS / 'install-hook.sh', hookrepo)
     check('hook-installs', True, lambda: installed.returncode == 0)
-    trusted = hookrepo / '.git/hooks/sol-simplify-review'
+    trusted = hookrepo / '.git/hooks/frontier-simplify-review'
     (trusted / 'scripts/selftest.sh').write_text('#!/bin/sh\nset -eu\n[ "$(bash "$REVIEW_TEST_SCRIPTS/probe.sh")" = reject ] || { echo "NOT OK missing-input-was-accepted"; exit 1; }\n')
     # Consumer identities from the maintainer's installed snapshot still apply, if any.
     (candidate / 'probe.sh').write_text('#!/bin/sh\necho accept\n')
@@ -802,6 +831,25 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
     check('hook-can-reinstall-selected-installed-version', True,
           lambda: cmd(trusted / 'scripts/install-hook.sh', hookrepo).returncode == 0
           and (trusted / 'scripts/selftest.sh').is_file())
+
+    old_hook_repo = t / 'legacy-hook-repo'
+    old_hook_repo.mkdir()
+    git(old_hook_repo, 'init', '-q')
+    old_hooks = old_hook_repo / '.git/hooks'
+    (old_hooks / 'pre-commit').write_text('#!/bin/sh\n# sol-simplify-review installed hook\nexit 99\n')
+    prior_hook = old_hooks / 'pre-commit.before-review'
+    prior_hook.write_text('#!/bin/sh\n# existing user hook\nexit 0\n')
+    migrated_hook = cmd(SCRIPTS / 'install-hook.sh', old_hook_repo)
+    check('hook-rebrand-preserves-original-user-hook-without-chaining-old-driver', True,
+          lambda: migrated_hook.returncode == 0 and 'existing user hook' in prior_hook.read_text()
+          and 'frontier-simplify-review installed hook' in (old_hooks / 'pre-commit').read_text())
+
+    events(t / 'legacy-seal-event', 'review', tools=False)
+    with (t / 'legacy-seal-event').open('a') as f:
+        f.write(json.dumps({'type': 'item.completed', 'item': {'type': 'command_execution',
+                      'command': 'cat x', 'aggregated_output': 'schema: sol-simplify-review-seal.v1'}}) + '\n')
+    check('legacy-seal-evidence-is-still-recognized', False,
+          lambda: ledger.shell_guard('guard_seal_unseen', t / 'legacy-seal-event'), 'seal-seen')
 
     config = t / 'consumers.json'
     config.write_text(json.dumps({'consumers': [{'repository': '/example/fixture-consumer', 'markers': ['FixtureAlias']}]}))

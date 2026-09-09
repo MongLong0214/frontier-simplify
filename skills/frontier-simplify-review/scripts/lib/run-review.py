@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-from protocol import (Rejected, require, git, digest, hunks, hunk_markdown,
+from protocol import (Rejected, require, git, digest, hunks, hunk_markdown, artifact_root,
                       review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
 import ledger
 
@@ -28,7 +28,7 @@ def root_for(repo, pr):
             'pr-id', 'use one stable PR number or local review ID, never a round suffix')
     common = git(repo, 'rev-parse', '--git-common-dir').decode().strip()
     identity = str((Path(repo) / common).resolve())
-    root = Path(os.environ.get('REVIEW_ARTIFACTS', str(Path.home() / '.sol-simplify-review'))).resolve()
+    root = artifact_root()
     require(not root.is_relative_to(Path(repo).resolve()), 'host-location', 'REVIEW_ARTIFACTS must be outside the consumer checkout')
     return root / digest(identity.encode())[:16] / pr
 

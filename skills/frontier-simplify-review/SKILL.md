@@ -1,5 +1,5 @@
 ---
-name: sol-simplify-review
+name: frontier-simplify-review
 description: >-
   Review a change for concrete defects, then check repairs and their regressions against the
   preserved review. Use for substantial PR reviews or repeated review rounds. Stops automatic
@@ -8,7 +8,7 @@ metadata:
   author: MongLong0214 <MongLong0214@users.noreply.github.com>
 ---
 
-# sol-simplify review
+# Frontier-simplify review
 
 Find defects with evidence. Preserve the findings. Check the repair and its affected siblings.
 
@@ -239,5 +239,5 @@ This design retains defect discovery and focused follow-up while withdrawing unp
 approval. Safe merge completion has not been demonstrated by the available consumer sequences.
 The [reassessment](../../dogfood/REASSESSMENT.md) records the evidence and the cost of this change.
 
-`sol-simplify: preserve review evidence for the PR's repair and retrospective; remove the receipts
+`frontier-simplify: preserve review evidence for the PR's repair and retrospective; remove the receipts
 when neither is needed. No standing product inventory or new approval workflow is required.`

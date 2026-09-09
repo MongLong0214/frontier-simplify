@@ -1,12 +1,14 @@
 ---
-name: sol-simplify-audit
-description: Diagnoses a repository that has accumulated agent-built bureaucracy. Measures how much of the codebase exists to police the work rather than do it, finds the maintenance loops that produce commits with no product value, and ranks what to delete. Use when the user says "audit this repo for ceremony", "why is this repo so slow", "we spend all our time on tooling", "find the bureaucracy", "sol-simplify-audit", or when a project is visibly stalled on its own gates and validators. One-shot report; deletes nothing.
+name: frontier-simplify-audit
+description: Diagnoses a repository that has accumulated agent-built bureaucracy. Measures how much of the codebase exists to police the work rather than do it, finds the maintenance loops that produce commits with no product value, and ranks what to delete. Use when the user says "audit this repo for ceremony", "why is this repo so slow", "we spend all our time on tooling", "find the bureaucracy", "frontier-simplify-audit", or when a project is visibly stalled on its own gates and validators. One-shot report; deletes nothing.
 metadata:
   author: MongLong0214 <MongLong0214@users.noreply.github.com>
 
 ---
 
-# sol-simplify audit
+# Frontier-simplify audit
+
+Built for frontier coding agents including Fable and Astra (`gpt-6-astra`); the method is model-independent.
 
 Find the machinery that exists to govern the work rather than perform it, and price it.
 Report only; the user decides what dies.
@@ -47,8 +49,8 @@ git log --format='%ad %s' --date=short | grep -Ei \
   're-measure|reconcile|re-pin|census|realign|re-derive|restate|re-record|after rebase'
 ```
 
-Each one is a commit that shipped nothing. Report the count, the share of all commits, and the
-worst single day.
+These are candidate loop commits, not proof that nothing shipped. Confirm with diffs before
+classifying them. Report the candidate count, share, and worst single day with that limitation.
 
 **Churn concentration.** The files the project actually spends its life on:
 
@@ -72,7 +74,7 @@ own machinery can satisfy — is the most expensive finding there is.
 **Expiring process.** Process deliberately kept carries its own removal trigger:
 
 ```bash
-grep -rnE '(#|//|<!--) ?sol-simplify:' .
+grep -rnE '(#|//|<!--) ?(frontier-simplify|sol-simplify):' .
 ```
 
 Each hit is a row: what it is, why it exists, the condition that retires it. Any marker with no

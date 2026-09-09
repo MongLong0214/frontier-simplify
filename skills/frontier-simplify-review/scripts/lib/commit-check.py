@@ -23,7 +23,7 @@ def git(repo, *args):
 
 def check(repo, trusted):
     changed = subprocess.check_output(['git', '-C', str(repo), 'diff', '--cached', '--name-only', '-z'])
-    if not any(p.startswith(b'skills/sol-simplify-review/') for p in changed.split(b'\0')):
+    if not any(p.startswith(b'skills/frontier-simplify-review/') for p in changed.split(b'\0')):
         return
     # The index tree is one Git snapshot; tests cannot validate unstaged replacement bytes.
     tree = git(repo, 'write-tree')
@@ -34,7 +34,7 @@ def check(repo, trusted):
         # every commit -- benchmarks included -- to test a directory that is 276KB of it. The
         # snapshot is still one Git tree, so what the tests read is still exactly what is staged.
         subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', '-o', str(archive),
-                        tree, 'skills/sol-simplify-review'], check=True)
+                        tree, 'skills/frontier-simplify-review'], check=True)
         staged = tmp / 'staged'
         staged.mkdir()
         with tarfile.open(archive) as tar:
@@ -42,11 +42,11 @@ def check(repo, trusted):
                 path = staged / member.name
                 if not path.resolve().is_relative_to(staged) or member.issym() or member.islnk():
                     # Unrelated symlinks are not needed to test the portable skill.
-                    if member.name.startswith('skills/sol-simplify-review/'):
+                    if member.name.startswith('skills/frontier-simplify-review/'):
                         raise ValueError('skill code must be regular files in the staged snapshot')
                     continue
                 tar.extract(member, staged)
-        candidate = staged / 'skills/sol-simplify-review/scripts'
+        candidate = staged / 'skills/frontier-simplify-review/scripts'
         env = dict(os.environ, REVIEW_TEST_SCRIPTS=str(candidate), PYTHONDONTWRITEBYTECODE='1')
         env.pop('REVIEW_TEST_SKIP', None)
         # The hook runs the fast half. It ran the whole suite twice -- once for the

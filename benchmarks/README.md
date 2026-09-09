@@ -1,7 +1,34 @@
-# Benchmark
+# Frontier-simplify benchmarks: Fable and Astra
+
+Frontier-simplify targets Fable and Astra (`gpt-6-astra`). Model names in recorded results identify
+what actually ran, not which models the skill is intended for. There is no Fable measurement yet.
 
 Same prompt, same model, four arms (see [`prompts/_arms.md`](prompts/_arms.md)): nothing, two
 one-line instructions, and the full skill. Built so the skill can lose.
+
+## Astra spot check (2026-09-09)
+
+`gpt-6-astra`, `xhigh`, Codex CLI 0.153.4, scenario `02-process`, **one run per arm**.
+Both credential-only homes and all work directories were temporary; only the treatment home
+contained the core skill. No personal ancestor instructions or sibling outputs were read.
+Each linked directory preserves the exact `req.md`, `process.md` and `run.log`, including the
+model banner. The treatment transcript shows the actual `frontier-simplify/SKILL.md` read.
+
+| Arm | `process.md` lines | Skill read |
+|---|---:|:---:|
+| [Plain](results/02-process-off-astra-isolated-20260909/) | 246 | No |
+| [Korean one-line instruction](results/02-process-oneline-astra-isolated-20260909/) | 81 | No |
+| [English one-line instruction](results/02-process-oneline-en-astra-isolated-20260909/) | 152 | No |
+| [Frontier-simplify](results/02-process-on-astra-isolated-20260909/) | 33 | Yes |
+
+The 33-line output includes a development flow and verification of scoring, execution isolation,
+result storage and fair comparison. These are observed contents, not proof of correctness.
+This spot check reports line counts, **not new ceremony scores**, Fable effectiveness or safe
+code-review convergence. Do not pool it with the historical five-scenario scores below.
+An earlier control started inside the maintainer's checkout and read personal ancestor instructions;
+it was stopped and excluded before this complete isolated four-arm run, not chosen by outcome.
+
+To repeat with fresh output paths: `FRONTIERSIMPLIFY_TAG=my-astra-run ./run.sh 02-process`.
 
 ## Reproduce
 
@@ -33,23 +60,25 @@ machinery as the problem and deleting it, which is what stages 3 and 4 of the sk
 at all — the axis ACES ([arXiv:2608.20614](https://arxiv.org/abs/2608.20614)) reports that no
 document scan can observe. It runs eight probes: four the skill must fire on, and four it must
 stay out of because its own *Never cut these* section puts them off limits (unit tests, fixing
-an injection, accessibility, a data migration). Each runs twice — once with the skill alone
+an injection, accessibility, a data migration). Negative probes run twice — once with the skill alone
 (`isolation`), once with four competing neighbour skills installed alongside it (`group`, the
-realistic install). Activation is read off the transcript rather than judged: Codex opens a
-skill by reading its `SKILL.md`, so the path lands in `run.log`. Results and the two known
-two sweeps — before and after the
+realistic install); positive probes run in group mode. Activation is read off the transcript rather than judged: Codex opens a
+skill by reading its `SKILL.md`, so the path lands in `run.log`. The two historical sweeps — before and after the
 description fix the first sweep prompted — are in
 [`results/SCORES.md`](results/SCORES.md#discovery-and-routing), with raw outputs under
 `results/routing/` and `results/routing-v1-predesc/`.
 
-Requires an authenticated `codex` CLI. Override the model with `SOLSIMPLIFY_MODEL` and the
-reasoning effort with `SOLSIMPLIFY_EFFORT`. Outputs land in `results/<prompt>-<arm>/` and
-`results/routing/<probe>-<mode>/`.
+Requires an authenticated `codex` CLI. The default is `gpt-6-astra` at `xhigh`. Override it with
+`FRONTIERSIMPLIFY_MODEL` and `FRONTIERSIMPLIFY_EFFORT`. Choose `FRONTIERSIMPLIFY_TAG` for a new run;
+existing outputs are never overwritten. The old `SOLSIMPLIFY_*` variables remain fallback aliases.
+Outputs land in `results/<prompt>-<arm>-<tag>/` and `results/routing-<tag>/<probe>-<mode>/`.
+Both helpers execute outside the checkout in temporary work directories so they do not inherit
+the maintainer's ancestor instructions or see sibling results. Every arm gets the same scope instruction.
 
 Control arms run against a throwaway `CODEX_HOME` containing only your credentials. Moving
-`~/.codex/skills/sol-simplify` aside is **not** sufficient: Codex's shared app-server daemon caches
-discovered skills, and a parked skill still reached the model in one of our runs — the output
-carried `sol-simplify:` markers that a bare one-line prompt could never produce. The contamination is
+an installed skill aside is **not** sufficient: a parked skill still reached the model in one
+historical run, apparently through cached discovery — the output carried the then-current
+`sol-simplify:` markers that a bare one-line prompt could never produce. The contamination is
 silent, so `run.sh` greps every control arm for skill artifacts and prints a warning if any
 appear. If you reproduce this benchmark by hand, check for that leak before believing a control.
 
@@ -73,19 +102,18 @@ faith.
 
 Read these before quoting any number.
 
-- **The committed runs were not environmentally symmetric.** Control arms ran in a throwaway
+- **The initial historical runs were not environmentally symmetric.** Control arms ran in a throwaway
   `CODEX_HOME`; the skill arms ran in the author's real `~/.codex`, which also held other
   skills and settings. `run.sh` now builds *both* bases from credentials alone and adds only
-  the skill to the treatment base, so a fresh reproduction is symmetric — but the numbers in
-  `results/` predate that fix and cannot fully attribute their effect to this skill alone.
-  A symmetric spot check of `02-process` is recorded in `results/`.
+  the skill to the treatment base. Those initial runs cannot fully attribute their effect to
+  this skill alone. The separately tagged symmetric `02-process` spot checks use the corrected setup.
 - **Single scorer, no blinding.** One person scored every run against the rubric, knowing
   which arm produced it. Re-scoring by someone else is the obvious next step; every score
   cites a line so disagreement can be specific.
 - **Loop-commit counts are a subject-line heuristic.** `measure.sh` labels them *candidate*
   loop commits for that reason. Confirm with diffs before saying a commit shipped nothing.
-- **Only `05-incident` preserves a full work tree** (source, tests, workflow, `run.log`). The
-  document scenarios preserve the produced document alone: they were run before `run.sh`
+- **Initial document runs lack transcripts.** Historical `05-incident` preserves a full work
+  tree (source, tests, workflow, `run.log`). The initial document scenarios were run before `run.sh`
   captured `run.log`, so their transcripts are gone and cannot be reconstructed. Re-running
   any of them with the current `run.sh` writes `run.log` alongside the document.
 
@@ -96,8 +124,8 @@ Read these before quoting any number.
   rather than collapsed. Treat all of it as a demonstration of a reproducible effect, not as
   statistics — the sample is far too small for a confidence interval, and quoting one here
   would be exactly the invented precision this project scores against.
-- **One model.** Measured on `gpt-5.6-sol` at `xhigh` effort — the configuration the skill was
-  written for. It is untested elsewhere, and the failure mode it targets may be weaker or
-  absent on other models.
+- **Do not pool models.** The historical five-scenario scores and routing sweeps used
+  `gpt-5.6-sol` at `xhigh`. New Astra measurements are separate; Fable remains an intended use
+  case without measured results. The failure mode may be weaker or absent on another model.
 - **No per-repo savings claims.** The lean version of your project was never written, so there
   is no baseline to subtract from. The only real numbers are the ones in `results/`.

@@ -4,7 +4,11 @@ This describes the original two-round hypothesis, not the current runner contrac
 [consumer reassessment](../../dogfood/REASSESSMENT.md) withdrew that claim and automatic approval.
 The proposed controlled benchmark below still has no results.
 
-`skills/sol-simplify-review` ships with its design (`DESIGN.md`) and **without a measured claim.**
+Today's Frontier-simplify review targets Fable and Astra (`gpt-6-astra`) and bounds automatic
+attempts at three per PR. Neither that bound nor the core skill's document benchmarks establish
+safe review convergence for Fable or Astra. The two-round proposal below is historical.
+
+`skills/frontier-simplify-review` ships with its design (`DESIGN.md`) and **without a measured claim.**
 The rest of this repository reports numbers; this skill does not have them yet, and saying it
 converges in two rounds before measuring it would be the same overclaim the protocol exists to catch.
 

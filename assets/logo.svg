@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 124" width="720" height="124" role="img" aria-labelledby="ss-t ss-d">
-  <title id="ss-t">sol-simplify</title>
-  <desc id="ss-d">A pair of scissors snipping continuously, beside the wordmark sol-simplify.</desc>
+  <title id="ss-t">Frontier-simplify</title>
+  <desc id="ss-d">A pair of scissors snipping continuously, beside the wordmark frontier-simplify.</desc>
   <style>
     text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
     .h1, .h2 { transform-box: view-box; transform-origin: 152px 62px; }
@@ -40,5 +40,5 @@
   <circle cx="152" cy="62" r="5" fill="#1f1f1f"/>
   <circle cx="152" cy="62" r="1.8" fill="#e05d52"/>
 
-  <text x="258" y="78" fill="#1f1f1f" font-size="46" font-weight="650" letter-spacing="0.5">sol-<tspan fill="#e05d52">simplify</tspan></text>
+  <text x="248" y="78" fill="#1f1f1f" font-size="46" font-weight="650" letter-spacing="0.5">Frontier-<tspan fill="#e05d52">simplify</tspan></text>
 </svg>

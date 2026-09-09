@@ -12,7 +12,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--status', action='store_true', help='read PR review status without fetching or calling a model')
 a = p.parse_args()
 config = Path(os.environ.get('REVIEW_CONSUMERS_CONFIG', str(HERE / 'consumers.json')))
-runner = HERE.parent / 'skills/sol-simplify-review/scripts/review-pr.sh'
+runner = HERE.parent / 'skills/frontier-simplify-review/scripts/review-pr.sh'
 failed = False
 for consumer in json.loads(config.read_text())['consumers']:
     repo = consumer['repository']

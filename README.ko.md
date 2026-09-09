@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg?v=3">
-    <img src="assets/logo.svg?v=3" width="480" alt="sol-simplify — 가위와 워드마크">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg?v=4">
+    <img src="assets/logo.svg?v=4" width="480" alt="Frontier-simplify — Fable과 Astra를 위한 스킬">
   </picture>
 </p>
 
@@ -13,13 +13,14 @@
   <img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square" alt="MIT license">
   <img src="https://img.shields.io/badge/install-one%20file-111111?style=flat-square" alt="One file">
   <img src="https://img.shields.io/badge/works%20with-Codex%20%C2%B7%20Claude%20Code%20%C2%B7%20Cursor-111111?style=flat-square" alt="Works with">
-  <img src="https://img.shields.io/badge/measured%20on-gpt--5.6--sol-111111?style=flat-square" alt="Measured on gpt-5.6-sol">
+  <img src="https://img.shields.io/badge/measured%20on-gpt--6--astra-111111?style=flat-square" alt="Measured on gpt-6-astra">
 </p>
 
 <p align="center">
-  <strong>에이전트가 자기 작업 주위에 관료제를 짓는 걸 멈춘다.</strong><br>
+  <strong>Fable·Astra를 위해: 불필요한 절차와 반복 리뷰를 줄인다.</strong><br>
   <sub>마크다운 한 장. 설정할 것도, 실행할 것도 없다.<br>
-  <b>실측: 없이 돌린 런은 전부 아무도 요청하지 않은 절차를 만들어냈다. 적용한 런은 거의 전부 하나도 만들지 않았다.</b><br>
+  <b>Astra 단일 실측: 스킬 없이 246줄, 적용하면 33줄.</b><br>
+  프로세스 설계 시나리오 하나를 조건별 1회 실행했다. 길이는 품질 점수가 아니다. Fable은 미측정.<br>
   <a href="benchmarks/">어떻게 측정했는지 보기</a></sub>
 </p>
 
@@ -29,9 +30,14 @@
 
 ---
 
+# Fable·Astra를 위한 Frontier-simplify
+
+**Fable과 Astra (`gpt-6-astra`)** 같은 프론티어 코딩 에이전트를 위해 만들었다.
+지시는 모델에 종속되지 않는다. 지원 대상으로 명시한 모델과 실제 효과를 측정한 모델은 구분한다.
+
 코딩 에이전트는 코드만 과설계하지 않는다. **자기 작업 주위에 관료제를 짓는다.** 게이트, 레지스트리, 추적성 매트릭스, 검증기를 검증하는 검증기. 그러고는 프로젝트 수명을 그걸 유지하는 데 쓴다. 결국 기계가 제품보다 커지면 작업을 통과시키지 않기 시작한다.
 
-핵심 `sol-simplify` 스킬은 마크다운 한 장이며 플러그인이나 훅이 필수는 아니다.
+핵심 `frontier-simplify` 스킬은 마크다운 한 장이며 플러그인이나 훅이 필수는 아니다.
 아래에서 설명하는 선택형 리뷰 스킬에는 별도로 실행하는 로컬 실행기가 포함된다.
 
 ## 설치
@@ -41,30 +47,43 @@
 **Codex.** 플러그인으로 넣으면 버전 관리와 업데이트가 된다.
 
 ```bash
-codex plugin marketplace add MongLong0214/sol-simplify
-codex plugin add sol-simplify@sol-simplify
+codex plugin marketplace add MongLong0214/frontier-simplify
+codex plugin add frontier-simplify@frontier-simplify
 ```
 
 **Claude Code:**
 
 ```
-/plugin marketplace add MongLong0214/sol-simplify
-/plugin install sol-simplify@sol-simplify
+/plugin marketplace add MongLong0214/frontier-simplify
+/plugin install frontier-simplify@frontier-simplify
 ```
 
 **파일만 복사해도 된다.** `~/.codex/skills/`, `~/.claude/skills/`, 또는 다른 도구의 rules 디렉토리(Cursor, Windsurf, Cline, Copilot) 아래에 **자기 폴더를 만들어** 넣는다. 표준 프론트매터가 붙은 평범한 마크다운이다. 폴더는 지켜야 한다. `skills/` 바로 아래에 `SKILL.md`를 그냥 두면 로드는 된다. 다만 나중에 플러그인을 설치하면 그걸 가리고 조용히 구버전을 먹인다.
 
 ```bash
-mkdir -p ~/.codex/skills/sol-simplify
-curl -sL https://raw.githubusercontent.com/MongLong0214/sol-simplify/main/skills/sol-simplify/SKILL.md \
-  -o ~/.codex/skills/sol-simplify/SKILL.md
+mkdir -p ~/.codex/skills/frontier-simplify
+curl -sL https://raw.githubusercontent.com/MongLong0214/frontier-simplify/main/skills/frontier-simplify/SKILL.md \
+  -o ~/.codex/skills/frontier-simplify/SKILL.md
 ```
 
 제거는 파일 삭제.
 
+### sol-simplify에서 업그레이드
+
+**2.0.0**부터 저장소·플러그인·마켓플레이스와 세 스킬의 이름이 `frontier-simplify`로 바뀐다.
+기존 플러그인이나 직접 복사한 스킬은 원래 설치 방식으로 제거하고 위 명령으로 새 이름을 설치한다.
+구버전과 신버전을 동시에 활성화하지 않는다. 직접 사용하는 스크립트 경로도 바꾸고, 설치했던
+로컬 훅이나 poller는 새 checkout에서 다시 설치한다.
+
+기존 `~/.sol-simplify-review`가 있으면 그대로 재사용한다. 이름 변경으로 리뷰 이력과 PR별
+3회 예산이 초기화되지 않는다. `REVIEW_ARTIFACTS`로 선택한 경로도 그대로 사용할 수 있다.
+과거 벤치마크 원본과 당시 설계·재평가 기록은 원래 이름과 모델명을 보존한다.
+
 ## 무엇을 하는가
 
 **코드가 0줄이고 메인테이너가 1명인** 프로젝트의 개발 프로세스를 설계해달라고 했을 때:
+
+아래 예시는 과거 `gpt-5.6-sol` 실측이며 Astra나 Fable의 결과가 아니다.
 
 **없이 돌리면** 437줄, 35개 섹션이 나온다: 리스크 기반 품질 게이트, 6단 테스트 계층, CI 운영 모델, 릴리스 후보 체크리스트, 결함 분류 체계, 프로젝트 건강 지표, 그리고 이 문서 자체를 유지보수하는 방법에 관한 섹션.
 
@@ -81,7 +100,7 @@ curl -sL https://raw.githubusercontent.com/MongLong0214/sol-simplify/main/skills
 남기기로 한 절차에는 제거 조건을 붙인다. 나중에 감사할 수 있게, 영구히 굳지 않게:
 
 ```
-sol-simplify: <이게 왜 존재하는가>, <어떤 조건이 되면> 제거
+frontier-simplify: <이게 왜 존재하는가>, <어떤 조건이 되면> 제거
 ```
 
 ## 절대 자르지 않는 것
@@ -95,22 +114,23 @@ sol-simplify: <이게 왜 존재하는가>, <어떤 조건이 되면> 제거
 기존 레포를 진단하는 두 번째 스킬이 있다. 같은 방식으로 설치하고 *"이 레포 ceremony 감사해줘"* 라고 하면 된다.
 
 ```bash
-mkdir -p ~/.codex/skills/sol-simplify-audit
-curl -sL https://raw.githubusercontent.com/MongLong0214/sol-simplify/main/skills/sol-simplify-audit/SKILL.md \
-  -o ~/.codex/skills/sol-simplify-audit/SKILL.md
+mkdir -p ~/.codex/skills/frontier-simplify-audit
+curl -sL https://raw.githubusercontent.com/MongLong0214/frontier-simplify/main/skills/frontier-simplify-audit/SKILL.md \
+  -o ~/.codex/skills/frontier-simplify-audit/SKILL.md
 ```
 
 기계 대 제품 비율을 재고 아무것도 출하하지 않은 유지보수 커밋을 찾아 삭제 우선순위를 매긴다. 보고만 하고 파일은 바꾸지 않는다.
 
 ## 같은 코드 리뷰를 반복하지 않기
 
-선택형 **sol-simplify-review** 스킬은 구체적인 발견 사항을 보존하고, 그 근거로 수정과 회귀를
+선택형 **frontier-simplify-review** 스킬은 구체적인 발견 사항을 보존하고, 그 근거로 수정과 회귀를
 검토한다. 실행기는 1인용 trusted-local 도구이며 머지 게이트나 호스팅 서비스가 아니다.
 리뷰할 checkout 밖에 둔 이 저장소의 설치본에서 실행한다:
 
 ```sh
-skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto codex
-skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" status codex
+export REVIEW_CODEX_MODEL=gpt-6-astra  # Codex 실행기에서 Astra 선택
+skills/frontier-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto codex
+skills/frontier-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" status codex
 ```
 
 - 입력이 같으면 마지막 시도를 재사용한다. 코드·대상 커밋·제공한 맥락·lesson·응답·모델 설정·
@@ -132,14 +152,14 @@ skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" st
 Claude Code가 필요하다. 전체 오프라인 테스트와 선택형 Node 회귀 재생은 Node 22+를 사용한다.
 
 ```sh
-bash skills/sol-simplify-review/scripts/selftest.sh
+bash skills/frontier-simplify-review/scripts/selftest.sh
 python3 dogfood/run.py --status  # 등록된 소비자 조회, 모델 호출 없음
 python3 dogfood/run.py           # 한 번 조회·실행하고 종료, daemon 아님
 ```
 
 `dogfood/consumers.json`의 메인테이너 로컬 경로를 수정하거나 `REVIEW_CONSUMERS_CONFIG`로 별도 파일을
 선택한다. 플러그인 설치만으로 주기 실행이 시작되지는 않는다. 선택형 macOS poller·구현자 응답·
-측정된 회귀 단서는 [소비자 가이드](dogfood/README.md)와 [실행 가이드](skills/sol-simplify-review/README.md)에
+측정된 회귀 단서는 [소비자 가이드](dogfood/README.md)와 [실행 가이드](skills/frontier-simplify-review/README.md)에
 설명돼 있다. 소비자 리뷰는 push·댓글 작성·머지를 하지 않는다.
 
 ## 왜 만들었는가
@@ -167,6 +187,13 @@ docs: say where acceptance is decided, because the rule as written refuses all w
 
 ## 효과가 있나
 
+**Astra (`gpt-6-astra`), 2026-09-09:** `02-process`를 네 조건으로 새로 실행했다.
+기본 246줄, 한국어 한 줄 지시 81줄, 영어 한 줄 지시 152줄, Frontier-simplify 적용 33줄이었다.
+적용 조건의 실행 기록에서 실제 스킬 읽기를 확인했다. 조건별 1회 관측이며, 정확성 점수나
+리뷰 수렴의 증거는 아니다. [원본·실행 조건·한계](benchmarks/README.md#astra-spot-check-2026-09-09).
+
+아래 5개 시나리오 표는 **과거 `gpt-5.6-sol` 결과**다. Fable·Astra 성능으로 재표기하지 않는다.
+
 흔한 요청 5개를 각각 세 가지로 넣었다. 그냥, *"간단하게 해줘"* 한 문장을 붙여서, 스킬을 설치해서. 모델과 프롬프트는 매번 같다.
 
 숫자는 **요청받지 않았는데 모델이 덧붙인 것**의 개수다: 근거 없는 응답시간 목표, 단계적 배포 계획, 1인 팀을 위한 승인 단계. **0이 가장 좋다.**
@@ -188,17 +215,23 @@ docs: say where acceptance is decided, because the rule as written refuses all w
 ## FAQ
 
 **Ponytail 같은 코드 미니멀리즘 스킬과 뭐가 다른가?**
-층이 다르다. 그쪽은 코드를 두고 *"한 줄로 되나?"* 를 묻는다. sol-simplify는 절차를 두고 *"이 검사가 존재할 이유가 있나?"* 를 묻는다. 같이 쓰면 된다.
+층이 다르다. 그쪽은 코드를 두고 *"한 줄로 되나?"* 를 묻는다. frontier-simplify는 절차를 두고 *"이 검사가 존재할 이유가 있나?"* 를 묻는다. 같이 쓰면 된다.
 
 **에이전트가 테스트를 건너뛰게 되나?**
 실측: 아니다. 사고 시나리오의 모든 스킬 런이 근본 원인을 고치고 회귀 테스트를 추가했다. 동작을 검사하는 테스트는 절대 자르지 않는 목록에 있다. 실제 테스트를 자르는 걸 보면 이슈로 올릴 만한 버그다.
 
 **다른 모델에서도 되나?**
-모른다. `gpt-5.6-sol`을 위해 쓰고 그 위에서 측정했다. 이 실패 모드를 만드는 게 그 모델의 ambition 튜닝이다. 다른 환경 결과는 환영한다.
+Fable과 Astra (`gpt-6-astra`)를 주요 사용 대상으로 삼았다. 지시는 다른 모델에도 사용할 수 있지만,
+효과는 모델별로 측정해야 한다. 위 5개 시나리오 수치는 원래 `gpt-5.6-sol` 결과이며 Fable·Astra
+점수가 아니다. Fable 벤치마크는 아직 없으며, 다른 환경의 결과도 환영한다.
 
 **왜 핵심 스킬은 마크다운 한 장인가?**
-핵심 `sol-simplify` 스킬은 마크다운 한 장입니다. 선택적으로 쓰는 리뷰 스킬에는 명시적으로 실행하는
+핵심 `frontier-simplify` 스킬은 마크다운 한 장입니다. 선택적으로 쓰는 리뷰 스킬에는 명시적으로 실행하는
 리뷰 실행기, 회귀 재생기와 로컬 테스트 훅도 있습니다. 플러그인 설치만으로 poller가 시작되지는 않습니다.
+
+**Releases와 Packages는 어떻게 쓰나?**
+버전별 태그와 소스 압축 파일은 [GitHub Releases](https://github.com/MongLong0214/frontier-simplify/releases)로
+배포한다. 이 플러그인에 별도 패키지 레지스트리나 컨테이너 이미지는 필요하지 않다.
 
 ## License
 

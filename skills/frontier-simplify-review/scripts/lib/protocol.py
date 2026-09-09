@@ -22,6 +22,15 @@ def git(repo, *args):
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
+
+def artifact_root():
+    # Keep legacy paths in place: mirror paths participate in PR identity. Moving them
+    # would hide existing receipts and reset the same PR's automatic attempt budget.
+    legacy = Path.home() / '.sol-simplify-review'
+    default = legacy if legacy.exists() else Path.home() / '.frontier-simplify-review'
+    return Path(os.environ.get('REVIEW_ARTIFACTS', str(default))).resolve()
+
+
 def protocol_sha256(scripts):
     """Fingerprint of everything that decides a round's outcome.
 

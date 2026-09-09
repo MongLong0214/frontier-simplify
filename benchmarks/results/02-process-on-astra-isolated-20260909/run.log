@@ -1,0 +1,476 @@
+OpenAI Codex v0.153.4
+--------
+workdir: /private/tmp/frontier-benchmark.ugxUg6/on
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 01a0844b-acdd-7062-a8e7-edf04af4c839
+--------
+user
+새 오픈소스 프로젝트를 시작한다. AI 코딩 에이전트를 평가하는 도구고, 아직 코드는 한 줄도 없다. 메인테이너는 나 혼자다.
+
+개발을 시작하기 전에, 품질을 보장할 수 있는 개발 프로세스와 검증 체계를 설계해줘. 결과는 process.md 로 저장해줘.
+
+Benchmark scope: work only in this directory. You may read installed skills from CODEX_HOME. Do not inspect parent/home directories, other results, or delegate.
+
+codex
+1인 메인테이너가 운영할 수 있는 개발 흐름과 평가 결과의 신뢰성을 확인하는 검증 기준을 정리해 `process.md`로 저장하겠습니다. `frontier-simplify` 스킬을 적용해 초기 프로젝트에 필요한 절차로 범위를 좁히겠습니다.
+
+exec
+/bin/zsh -lc 'cat /private/var/folders/xx/n5v4c8552554smbzg_b9rp640000gn/T/tmp.LlPhU1PLBl/skills/frontier-simplify/SKILL.md' in /private/tmp/frontier-benchmark.ugxUg6/on
+ succeeded in 0ms:
+---
+name: frontier-simplify
+description: Stops an agent from manufacturing process around its own work — invented gates, approval flows, traceability matrices, verification machinery, and governance documents nobody asked for. Use when producing any document, plan, PRD, spec, design doc, ticket, ADR, or roadmap; when setting up a repository, workflow, or CI; when adding a check, validator, or gate; and whenever work has stalled on its own tooling. Triggers include "frontier-simplify", "PRD", "spec", "design doc", "plan this", "roadmap", "set up the repo", "quality gates", "process", "governance", "설계", "문서", "계획", "기획", "검증", "프로세스", or any complaint about bloat, ceremony, bureaucracy, or over-engineering. Never for product work — writing tests, fixing vulnerabilities, input validation, error handling, accessibility, or data migrations.
+metadata:
+  author: MongLong0214 <MongLong0214@users.noreply.github.com>
+
+---
+
+# Frontier-simplify
+
+Built for frontier coding agents, including Fable and Astra (`gpt-6-astra`). The instructions
+are model-independent; intended use is not a claim of measured effectiveness on every model.
+
+You over-engineer the *process of doing the work*, not the code: governance before product,
+checks stacked on checks, machinery that decides whether work may begin. It reads as rigor. It
+ends as overhead that outgrows what it guards and then refuses to let work through.
+
+Measured on one agent-built repository: verification machinery reached **20,280 lines against
+17,964 lines of product**; **33% of commits** existed only to keep that machinery in sync with
+itself; on day 17 a rule the agent had written for itself blocked four implementation lanes
+until a human deleted it.
+
+Ponytail cuts code. frontier-simplify cuts the process you build around code.
+
+## What you manufacture
+
+| tag | what it is | the tell |
+|---|---|---|
+| `ceremony` | a document or record that exists so process looks observed | nobody reads it twice |
+| `machinery` | tooling that authorizes, validates, or tracks work instead of doing it | it needs its own tests |
+| `pin` | a frozen count, inventory, or tally | unrelated work invalidates it |
+| `metatest` | a check on process compliance rather than behavior | it fails while the software is fine |
+| `circular` | a rule gated on what only its own machinery can produce | it can refuse everything |
+
+Name what you skipped with these words.
+
+## Before you produce an artifact
+
+- **One request, one artifact.** No companion ADR, ticket board, traceability matrix, gate registry, status ledger, decision record, OWNERS file, or index. If a second one is load-bearing, name it in a line and let the user ask.
+- **Numbers you were not given are fiction.** No SLOs, latency targets, KPIs, success metrics, or "collect a baseline for two weeks".
+- **Process you were not given is theater.** No phased rollout, definition-of-done checklist, approval gate, sign-off matrix, or rollback policy.
+- **External-authority work is never yours to start.** No legal clearance, trademark search, license audit, compliance review, or study protocol with participants and hypotheses.
+- **Process is earned, not chosen.** Ceremony scales with how many people must coordinate and what being wrong costs — not with how serious you want the project to look. One maintainer and no users earns none. Adopt a gate the day something gets past you without one.
+- **Size follows the ask.** Past roughly 5x the length of the request, you inflated it. Cut; do not justify. A section that exists to look complete is padding.
+- **Ambiguity shrinks scope.** State one assumption, build the smallest thing that satisfies it, continue. Your instinct is backwards here: unclear means less, not more.
+- **Thinking longer buys a better answer, not a bigger one.** If extra reasoning is turning into extra sections and extra gates, it is being spent in the wrong place.
+
+❌ Five-line request for a bookmark button → 440-line PRD with p95 targets, four analytics
+events, a five-phase rollout, and an eight-item definition of done.
+
+✅ 116 lines: flows, requirements, data model, acceptance criteria.
+`skipped: ceremony — rollout, KPIs, DoD. Say the word.`
+
+## Before you add a check
+
+- **You maintain every check forever.** A validator wants a contract test; the test wants fixed expectations; the expectations want updating whenever anything moves. Price that before the first one.
+- **Verify the product, never the process.** Ask: *does this catch a bug a user would hit?* If not, do not write it. That is a `metatest`, and it will fail on days when the software is perfect.
+- **Never pin a number unrelated work moves.** File counts, ticket totals, requirement censuses, section inventories — any figure two parallel changes can both invalidate becomes a permanent tax paid in commits that ship nothing. Compute it or drop it.
+- **Never build machinery that authorizes work.** No readiness resolver, execution-state validator, gate administrator, or state machine over your own process. It outgrows the product and eventually blocks it. Do the work instead.
+
+❌ "Add a validator asserting every ticket links to an ADR, plus a contract test pinning the
+link count."
+
+✅ "No — that count breaks on every merge and catches no bug. If a ticket needs an ADR, review
+catches it."
+
+## What you will tell yourself
+
+| the thought | what is true |
+|---|---|
+| "This domain is high-stakes, it needs more process." | Stakes buy better tests, not more paperwork. Name the failure the process prevents; if you cannot, it prevents nothing. |
+| "Doing it properly means doing it thoroughly." | Thoroughness belongs to the product. A gate is not thoroughness, it is a tax on every change after it. |
+| "We will need this once the team grows." | Add it when the team grows. You are designing process for people who do not exist. |
+| "Better to fix the rules before writing code." | Rules written before the work encode untested assumptions — and you will obey them anyway, for months. |
+| "A validator makes this reproducible." | Reproducibility comes from deterministic code and tests that run it. A check on documents reproduces nothing. |
+| "It is cheap to add now." | Nothing is ever removed. Price it at its lifetime, not its first commit. |
+
+## Notice the loop
+
+You are inside it when any of these is true:
+
+- Recent edits are mostly to checking machinery rather than to the product.
+- You are re-syncing a verification artifact with the repository instead of changing behavior.
+- You are fixing a validator that was itself written to fix a validator.
+- A check fails for a reason unrelated to whether the software works.
+
+Then **stop and say so.** Name the machinery, state its cost, propose deleting it. Do not add an
+exception, a reconciliation step, or another layer. Deleting a check is a legitimate fix and
+usually the right one.
+
+**Never make the rules heavier because of what just happened.** Do not add workflow steps, hard
+stops, or authority hierarchies to AGENTS.md, CLAUDE.md, or a README in reaction to one
+incident. Files that grow after every mistake are how a project talks itself into paralysis —
+and you will obey every line you add there, next session and every session after.
+
+## When your own process blocks you
+
+- **First ask whether the block is correct.** A gate that fails because the software is genuinely unsafe, insecure, or non-compliant is doing its job — fix the code, never the gate. This section is about the other case only.
+- **A rule you authored that blocks work for reasons unrelated to product behavior is a bug in the rule.** Say which it is, then delete or repair it at the source. Do not build an override path, an exception layer, or a document explaining how to read the rule so work becomes possible again.
+- **Never stall silently behind ceremony you created.** Name the rule in one sentence, then proceed under a stated assumption or ask. A gate with no human behind it is not a gate.
+
+## If you do add process
+
+Mark it with its own removal trigger, so it can be audited later instead of becoming permanent:
+
+```
+frontier-simplify: <why this exists>, remove when <condition>
+```
+
+Process with no removal condition never leaves.
+
+## Never cut these
+
+Correctness. Tests that exercise real behavior. Input validation at trust boundaries. Error
+handling that prevents data loss. Security. Accessibility. Data migrations. Anything the user
+explicitly asked for. Cutting these is damage, not restraint — restraint applies only to
+process you invented.
+
+## Output
+
+If you left out something a reader might reasonably have expected, close with one line naming
+it, tagged, so they can ask for it:
+
+`skipped: ceremony — rollout plan, KPIs, ADR. Say the word.`
+
+If you skipped nothing, write nothing. A line that reports an empty list every time is itself
+the ceremony this skill exists to remove.
+
+exec
+/bin/zsh -lc "pwd && rg --files -g 'AGENTS.md' -g '*.md' -g '"'!node_modules'"' -g '"'!.git'"' -g '"'!vendor'"' ." in /private/tmp/frontier-benchmark.ugxUg6/on
+ succeeded in 0ms:
+/private/tmp/frontier-benchmark.ugxUg6/on
+./req.md
+
+exec
+/bin/zsh -lc 'cat req.md' in /private/tmp/frontier-benchmark.ugxUg6/on
+ succeeded in 0ms:
+새 오픈소스 프로젝트를 시작한다. AI 코딩 에이전트를 평가하는 도구고, 아직 코드는 한 줄도 없다. 메인테이너는 나 혼자다.
+
+개발을 시작하기 전에, 품질을 보장할 수 있는 개발 프로세스와 검증 체계를 설계해줘. 결과는 process.md 로 저장해줘.
+
+Benchmark scope: work only in this directory. You may read installed skills from CODEX_HOME. Do not inspect parent/home directories, other results, or delegate.
+
+exec
+/bin/zsh -lc "rg --files --hidden -g '"'!.git'"' -g '"'!.agents/**'"' -g '"'!.codex/**'"' ." in /private/tmp/frontier-benchmark.ugxUg6/on
+ succeeded in 0ms:
+./req.md
+./run.log
+
+codex
+평가 도구의 핵심 위험은 잘못된 채점, 실행 오류의 오분류, 비교 조건의 불일치입니다. 이를 확인할 테스트와 재현 기록을 중심으로 설계하고, 실제 모델 호출 없이도 기본 검증이 가능하도록 하겠습니다.
+
+apply patch
+patch: completed
+/private/tmp/frontier-benchmark.ugxUg6/on/process.md
+diff --git a/process.md b/process.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..75e7220b7d7870d9564d652c888cfad7ac0d7fef
+--- /dev/null
++++ b/process.md
+@@ -0,0 +1,35 @@
++# 개발 프로세스와 검증 체계
++
++1인 메인테이너가 운영하는 초기 프로젝트다. 첫 제품은 로컬 CLI로 과제를 실행하고 결과를 파일로 저장한다고 가정한다. 목표는 실행·채점의 정확성과 평가 결과의 재현 가능성이다. 모델 성능의 변동과 도구 자체의 결함을 구분한다.
++
++## 개발 흐름
++
++1. 변경할 동작과 기대 결과를 짧게 적는다. 첫 구현은 고정 응답을 내는 가짜 에이전트로 `과제 로드 → 실행 → 채점 → 결과 저장`을 연결한다.
++2. 작은 변경 단위로 구현하고, 틀렸을 때 사용자가 영향을 받는 동작을 테스트한다. 버그 수정에는 같은 결함을 잡는 회귀 테스트를 붙인다.
++3. 첫 실행 경로가 생기면 로컬과 CI에서 같은 명령으로 포맷·린트와 오프라인 테스트를 실행한다. 메인테이너가 diff와 결과를 확인해 병합한다. 외부 기여도 같은 방식으로 검토한다.
++
++언어와 도구를 선택한 뒤 실제 검증 명령을 README에 적는다. CI는 외부 API나 비밀키 없이 실행한다. 첫 공개 배포 때 깨끗한 환경에서 설치하고 예제 과제 실행과 결과 읽기를 확인한다. 이후 설치·패키징 변경 때 이 확인을 반복한다.
++
++## 검증할 제품 동작
++
++| 위험 | 검증 방법 |
++| --- | --- |
++| 잘못된 채점·집계 | 정답을 아는 작은 과제로 성공·실패·부분 점수와 집계 결과를 확인한다. 실패·누락 실행을 성공률 분모에서 조용히 빼지 않는다. |
++| 실행 흐름의 결함 | 가짜 에이전트로 전체 경로를 테스트하고, 잘못된 입력·타임아웃·프로세스 종료·결과 저장 실패를 확인한다. 에이전트 실패와 평가 도구/API 오류를 구별해 기록한다. |
++| 실행 간 간섭·채점 조작 | 실제 에이전트 코드를 실행하기 전에 격리된 임시 작업 공간, 시간·자원 제한, 종료 후 정리를 구현한다. 호스트 비밀정보와 불필요한 네트워크 접근을 차단하고, 에이전트가 수정할 수 없는 채점 기준으로 평가한다. 경계가 지켜지는지 통합 테스트한다. |
++| 결과 유실·형식 오류 | 저장 후 다시 읽어 값과 오류 상태를 확인한다. 중단된 실행을 완료 결과로 취급하지 않는다. |
++
++테스트는 구현 내부 구조보다 관찰 가능한 결과를 확인한다. 실제 모델 호출은 실행기·에이전트 연동·채점 변경의 영향을 확인할 때, 비용 한도를 정하고 수동 실행한다. 모델 점수의 단발성 하락을 일반 CI의 실패 조건으로 삼지 않는다.
++
++## 평가 결과의 신뢰성
++
++- 실행마다 도구 커밋, 과제·채점 기준 버전, 입력과 프롬프트, 에이전트·모델 식별자와 제공되는 버전, 설정·예산·환경·시드를 저장한다. 원본 응답, 실행 상태, 비용·시간도 남기되 비밀키는 기록하지 않는다.
++- 비교 전에 과제 집합, 실행 예산, 반복 횟수와 재시도 규칙을 정하고 양쪽에 동일하게 적용한다. 재시도 전 실패도 보존한다. 평가 도구 오류는 성능 실패와 분리해 공개하고 비교의 제한을 밝힌다.
++- 결과에는 과제별 성적, 실제 실행 횟수와 실행 간 변동을 함께 제시한다. 한 번의 실행으로 우열을 단정하지 않는다. 동일 시드도 외부 모델 응답의 재현을 보장하지 않으므로 원본 기록으로 채점을 다시 확인할 수 있게 한다.
++- 공개 과제의 학습 데이터 포함 가능성과 결과의 적용 범위를 밝힌다. 과제나 채점 기준이 바뀌면 버전을 바꾸고 기존 점수와 직접 비교하지 않는다.
++
++절차를 늘리기 전에 실제 결함을 잡는 테스트를 보강한다. 기본 검증의 목적이 겹치면 중복 실행을 제거한다.
++
++frontier-simplify: 변경마다 기본 검증과 자체 검토를 두는 이유는 실행·채점 회귀를 발견하기 위해서다. 다른 자동화가 같은 검증을 수행하면 중복 절차를 제거한다.
++
++skipped: ceremony — 별도 승인 단계·추적표·정기 보고; machinery — 개발 착수를 허가하는 검증기; pin — 임의의 커버리지 목표; metatest — 문서 형식 준수 검사.
+
+diff --git a/process.md b/process.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..75e7220b7d7870d9564d652c888cfad7ac0d7fef
+--- /dev/null
++++ b/process.md
+@@ -0,0 +1,35 @@
++# 개발 프로세스와 검증 체계
++
++1인 메인테이너가 운영하는 초기 프로젝트다. 첫 제품은 로컬 CLI로 과제를 실행하고 결과를 파일로 저장한다고 가정한다. 목표는 실행·채점의 정확성과 평가 결과의 재현 가능성이다. 모델 성능의 변동과 도구 자체의 결함을 구분한다.
++
++## 개발 흐름
++
++1. 변경할 동작과 기대 결과를 짧게 적는다. 첫 구현은 고정 응답을 내는 가짜 에이전트로 `과제 로드 → 실행 → 채점 → 결과 저장`을 연결한다.
++2. 작은 변경 단위로 구현하고, 틀렸을 때 사용자가 영향을 받는 동작을 테스트한다. 버그 수정에는 같은 결함을 잡는 회귀 테스트를 붙인다.
++3. 첫 실행 경로가 생기면 로컬과 CI에서 같은 명령으로 포맷·린트와 오프라인 테스트를 실행한다. 메인테이너가 diff와 결과를 확인해 병합한다. 외부 기여도 같은 방식으로 검토한다.
++
++언어와 도구를 선택한 뒤 실제 검증 명령을 README에 적는다. CI는 외부 API나 비밀키 없이 실행한다. 첫 공개 배포 때 깨끗한 환경에서 설치하고 예제 과제 실행과 결과 읽기를 확인한다. 이후 설치·패키징 변경 때 이 확인을 반복한다.
++
++## 검증할 제품 동작
++
++| 위험 | 검증 방법 |
++| --- | --- |
++| 잘못된 채점·집계 | 정답을 아는 작은 과제로 성공·실패·부분 점수와 집계 결과를 확인한다. 실패·누락 실행을 성공률 분모에서 조용히 빼지 않는다. |
++| 실행 흐름의 결함 | 가짜 에이전트로 전체 경로를 테스트하고, 잘못된 입력·타임아웃·프로세스 종료·결과 저장 실패를 확인한다. 에이전트 실패와 평가 도구/API 오류를 구별해 기록한다. |
++| 실행 간 간섭·채점 조작 | 실제 에이전트 코드를 실행하기 전에 격리된 임시 작업 공간, 시간·자원 제한, 종료 후 정리를 구현한다. 호스트 비밀정보와 불필요한 네트워크 접근을 차단하고, 에이전트가 수정할 수 없는 채점 기준으로 평가한다. 경계가 지켜지는지 통합 테스트한다. |
++| 결과 유실·형식 오류 | 저장 후 다시 읽어 값과 오류 상태를 확인한다. 중단된 실행을 완료 결과로 취급하지 않는다. |
++
++테스트는 구현 내부 구조보다 관찰 가능한 결과를 확인한다. 실제 모델 호출은 실행기·에이전트 연동·채점 변경의 영향을 확인할 때, 비용 한도를 정하고 수동 실행한다. 모델 점수의 단발성 하락을 일반 CI의 실패 조건으로 삼지 않는다.
++
++## 평가 결과의 신뢰성
++
++- 실행마다 도구 커밋, 과제·채점 기준 버전, 입력과 프롬프트, 에이전트·모델 식별자와 제공되는 버전, 설정·예산·환경·시드를 저장한다. 원본 응답, 실행 상태, 비용·시간도 남기되 비밀키는 기록하지 않는다.
++- 비교 전에 과제 집합, 실행 예산, 반복 횟수와 재시도 규칙을 정하고 양쪽에 동일하게 적용한다. 재시도 전 실패도 보존한다. 평가 도구 오류는 성능 실패와 분리해 공개하고 비교의 제한을 밝힌다.
++- 결과에는 과제별 성적, 실제 실행 횟수와 실행 간 변동을 함께 제시한다. 한 번의 실행으로 우열을 단정하지 않는다. 동일 시드도 외부 모델 응답의 재현을 보장하지 않으므로 원본 기록으로 채점을 다시 확인할 수 있게 한다.
++- 공개 과제의 학습 데이터 포함 가능성과 결과의 적용 범위를 밝힌다. 과제나 채점 기준이 바뀌면 버전을 바꾸고 기존 점수와 직접 비교하지 않는다.
++
++절차를 늘리기 전에 실제 결함을 잡는 테스트를 보강한다. 기본 검증의 목적이 겹치면 중복 실행을 제거한다.
++
++frontier-simplify: 변경마다 기본 검증과 자체 검토를 두는 이유는 실행·채점 회귀를 발견하기 위해서다. 다른 자동화가 같은 검증을 수행하면 중복 절차를 제거한다.
++
++skipped: ceremony — 별도 승인 단계·추적표·정기 보고; machinery — 개발 착수를 허가하는 검증기; pin — 임의의 커버리지 목표; metatest — 문서 형식 준수 검사.
+
+exec
+/bin/zsh -lc 'cat process.md' in /private/tmp/frontier-benchmark.ugxUg6/on
+ succeeded in 0ms:
+# 개발 프로세스와 검증 체계
+
+1인 메인테이너가 운영하는 초기 프로젝트다. 첫 제품은 로컬 CLI로 과제를 실행하고 결과를 파일로 저장한다고 가정한다. 목표는 실행·채점의 정확성과 평가 결과의 재현 가능성이다. 모델 성능의 변동과 도구 자체의 결함을 구분한다.
+
+## 개발 흐름
+
+1. 변경할 동작과 기대 결과를 짧게 적는다. 첫 구현은 고정 응답을 내는 가짜 에이전트로 `과제 로드 → 실행 → 채점 → 결과 저장`을 연결한다.
+2. 작은 변경 단위로 구현하고, 틀렸을 때 사용자가 영향을 받는 동작을 테스트한다. 버그 수정에는 같은 결함을 잡는 회귀 테스트를 붙인다.
+3. 첫 실행 경로가 생기면 로컬과 CI에서 같은 명령으로 포맷·린트와 오프라인 테스트를 실행한다. 메인테이너가 diff와 결과를 확인해 병합한다. 외부 기여도 같은 방식으로 검토한다.
+
+언어와 도구를 선택한 뒤 실제 검증 명령을 README에 적는다. CI는 외부 API나 비밀키 없이 실행한다. 첫 공개 배포 때 깨끗한 환경에서 설치하고 예제 과제 실행과 결과 읽기를 확인한다. 이후 설치·패키징 변경 때 이 확인을 반복한다.
+
+## 검증할 제품 동작
+
+| 위험 | 검증 방법 |
+| --- | --- |
+| 잘못된 채점·집계 | 정답을 아는 작은 과제로 성공·실패·부분 점수와 집계 결과를 확인한다. 실패·누락 실행을 성공률 분모에서 조용히 빼지 않는다. |
+| 실행 흐름의 결함 | 가짜 에이전트로 전체 경로를 테스트하고, 잘못된 입력·타임아웃·프로세스 종료·결과 저장 실패를 확인한다. 에이전트 실패와 평가 도구/API 오류를 구별해 기록한다. |
+| 실행 간 간섭·채점 조작 | 실제 에이전트 코드를 실행하기 전에 격리된 임시 작업 공간, 시간·자원 제한, 종료 후 정리를 구현한다. 호스트 비밀정보와 불필요한 네트워크 접근을 차단하고, 에이전트가 수정할 수 없는 채점 기준으로 평가한다. 경계가 지켜지는지 통합 테스트한다. |
+| 결과 유실·형식 오류 | 저장 후 다시 읽어 값과 오류 상태를 확인한다. 중단된 실행을 완료 결과로 취급하지 않는다. |
+
+테스트는 구현 내부 구조보다 관찰 가능한 결과를 확인한다. 실제 모델 호출은 실행기·에이전트 연동·채점 변경의 영향을 확인할 때, 비용 한도를 정하고 수동 실행한다. 모델 점수의 단발성 하락을 일반 CI의 실패 조건으로 삼지 않는다.
+
+## 평가 결과의 신뢰성
+
+- 실행마다 도구 커밋, 과제·채점 기준 버전, 입력과 프롬프트, 에이전트·모델 식별자와 제공되는 버전, 설정·예산·환경·시드를 저장한다. 원본 응답, 실행 상태, 비용·시간도 남기되 비밀키는 기록하지 않는다.
+- 비교 전에 과제 집합, 실행 예산, 반복 횟수와 재시도 규칙을 정하고 양쪽에 동일하게 적용한다. 재시도 전 실패도 보존한다. 평가 도구 오류는 성능 실패와 분리해 공개하고 비교의 제한을 밝힌다.
+- 결과에는 과제별 성적, 실제 실행 횟수와 실행 간 변동을 함께 제시한다. 한 번의 실행으로 우열을 단정하지 않는다. 동일 시드도 외부 모델 응답의 재현을 보장하지 않으므로 원본 기록으로 채점을 다시 확인할 수 있게 한다.
+- 공개 과제의 학습 데이터 포함 가능성과 결과의 적용 범위를 밝힌다. 과제나 채점 기준이 바뀌면 버전을 바꾸고 기존 점수와 직접 비교하지 않는다.
+
+절차를 늘리기 전에 실제 결함을 잡는 테스트를 보강한다. 기본 검증의 목적이 겹치면 중복 실행을 제거한다.
+
+frontier-simplify: 변경마다 기본 검증과 자체 검토를 두는 이유는 실행·채점 회귀를 발견하기 위해서다. 다른 자동화가 같은 검증을 수행하면 중복 절차를 제거한다.
+
+skipped: ceremony — 별도 승인 단계·추적표·정기 보고; machinery — 개발 착수를 허가하는 검증기; pin — 임의의 커버리지 목표; metatest — 문서 형식 준수 검사.
+
+diff --git a/process.md b/process.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..75e7220b7d7870d9564d652c888cfad7ac0d7fef
+--- /dev/null
++++ b/process.md
+@@ -0,0 +1,35 @@
++# 개발 프로세스와 검증 체계
++
++1인 메인테이너가 운영하는 초기 프로젝트다. 첫 제품은 로컬 CLI로 과제를 실행하고 결과를 파일로 저장한다고 가정한다. 목표는 실행·채점의 정확성과 평가 결과의 재현 가능성이다. 모델 성능의 변동과 도구 자체의 결함을 구분한다.
++
++## 개발 흐름
++
++1. 변경할 동작과 기대 결과를 짧게 적는다. 첫 구현은 고정 응답을 내는 가짜 에이전트로 `과제 로드 → 실행 → 채점 → 결과 저장`을 연결한다.
++2. 작은 변경 단위로 구현하고, 틀렸을 때 사용자가 영향을 받는 동작을 테스트한다. 버그 수정에는 같은 결함을 잡는 회귀 테스트를 붙인다.
++3. 첫 실행 경로가 생기면 로컬과 CI에서 같은 명령으로 포맷·린트와 오프라인 테스트를 실행한다. 메인테이너가 diff와 결과를 확인해 병합한다. 외부 기여도 같은 방식으로 검토한다.
++
++언어와 도구를 선택한 뒤 실제 검증 명령을 README에 적는다. CI는 외부 API나 비밀키 없이 실행한다. 첫 공개 배포 때 깨끗한 환경에서 설치하고 예제 과제 실행과 결과 읽기를 확인한다. 이후 설치·패키징 변경 때 이 확인을 반복한다.
++
++## 검증할 제품 동작
++
++| 위험 | 검증 방법 |
++| --- | --- |
++| 잘못된 채점·집계 | 정답을 아는 작은 과제로 성공·실패·부분 점수와 집계 결과를 확인한다. 실패·누락 실행을 성공률 분모에서 조용히 빼지 않는다. |
++| 실행 흐름의 결함 | 가짜 에이전트로 전체 경로를 테스트하고, 잘못된 입력·타임아웃·프로세스 종료·결과 저장 실패를 확인한다. 에이전트 실패와 평가 도구/API 오류를 구별해 기록한다. |
++| 실행 간 간섭·채점 조작 | 실제 에이전트 코드를 실행하기 전에 격리된 임시 작업 공간, 시간·자원 제한, 종료 후 정리를 구현한다. 호스트 비밀정보와 불필요한 네트워크 접근을 차단하고, 에이전트가 수정할 수 없는 채점 기준으로 평가한다. 경계가 지켜지는지 통합 테스트한다. |
++| 결과 유실·형식 오류 | 저장 후 다시 읽어 값과 오류 상태를 확인한다. 중단된 실행을 완료 결과로 취급하지 않는다. |
++
++테스트는 구현 내부 구조보다 관찰 가능한 결과를 확인한다. 실제 모델 호출은 실행기·에이전트 연동·채점 변경의 영향을 확인할 때, 비용 한도를 정하고 수동 실행한다. 모델 점수의 단발성 하락을 일반 CI의 실패 조건으로 삼지 않는다.
++
++## 평가 결과의 신뢰성
++
++- 실행마다 도구 커밋, 과제·채점 기준 버전, 입력과 프롬프트, 에이전트·모델 식별자와 제공되는 버전, 설정·예산·환경·시드를 저장한다. 원본 응답, 실행 상태, 비용·시간도 남기되 비밀키는 기록하지 않는다.
++- 비교 전에 과제 집합, 실행 예산, 반복 횟수와 재시도 규칙을 정하고 양쪽에 동일하게 적용한다. 재시도 전 실패도 보존한다. 평가 도구 오류는 성능 실패와 분리해 공개하고 비교의 제한을 밝힌다.
++- 결과에는 과제별 성적, 실제 실행 횟수와 실행 간 변동을 함께 제시한다. 한 번의 실행으로 우열을 단정하지 않는다. 동일 시드도 외부 모델 응답의 재현을 보장하지 않으므로 원본 기록으로 채점을 다시 확인할 수 있게 한다.
++- 공개 과제의 학습 데이터 포함 가능성과 결과의 적용 범위를 밝힌다. 과제나 채점 기준이 바뀌면 버전을 바꾸고 기존 점수와 직접 비교하지 않는다.
++
++절차를 늘리기 전에 실제 결함을 잡는 테스트를 보강한다. 기본 검증의 목적이 겹치면 중복 실행을 제거한다.
++
++frontier-simplify: 변경마다 기본 검증과 자체 검토를 두는 이유는 실행·채점 회귀를 발견하기 위해서다. 다른 자동화가 같은 검증을 수행하면 중복 절차를 제거한다.
++
++skipped: ceremony — 별도 승인 단계·추적표·정기 보고; machinery — 개발 착수를 허가하는 검증기; pin — 임의의 커버리지 목표; metatest — 문서 형식 준수 검사.
+
+apply patch
+patch: completed
+/private/tmp/frontier-benchmark.ugxUg6/on/process.md
+diff --git a/process.md b/process.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..25bb8b3b2b38f4f7dfc3a0547e499f87a3ef6c19
+--- /dev/null
++++ b/process.md
+@@ -0,0 +1,33 @@
++# 개발 프로세스와 검증 체계
++
++1인 메인테이너가 운영하는 초기 프로젝트다. 첫 제품은 로컬 CLI로 과제를 실행하고 결과를 파일로 저장한다고 가정한다. 목표는 실행·채점의 정확성과 평가 결과의 재현 가능성이다. 모델 성능의 변동과 도구 자체의 결함을 구분한다.
++
++## 개발 흐름
++
++1. 변경할 동작과 기대 결과를 짧게 적는다. 첫 구현은 고정 응답을 내는 가짜 에이전트로 `과제 로드 → 실행 → 채점 → 결과 저장`을 연결한다.
++2. 작은 변경 단위로 구현하고, 틀렸을 때 사용자가 영향을 받는 동작을 테스트한다. 버그 수정에는 같은 결함을 잡는 회귀 테스트를 붙인다.
++3. 첫 실행 경로가 생기면 로컬과 CI에서 같은 명령으로 포맷·린트와 오프라인 테스트를 실행한다. 메인테이너가 diff와 결과를 확인해 병합한다. 외부 기여도 같은 방식으로 검토한다.
++
++언어와 도구를 선택한 뒤 실제 검증 명령을 README에 적는다. CI는 외부 API나 비밀키 없이 실행한다. 첫 공개 배포 때 깨끗한 환경에서 설치하고 예제 과제 실행과 결과 읽기를 확인한다. 이후 설치·패키징 변경 때 이 확인을 반복한다.
++
++## 검증할 제품 동작
++
++| 위험 | 검증 방법 |
++| --- | --- |
++| 잘못된 채점·집계 | 정답을 아는 작은 과제로 성공·실패·부분 점수와 집계 결과를 확인한다. 실패·누락 실행을 성공률 분모에서 조용히 빼지 않는다. |
++| 실행 흐름의 결함 | 가짜 에이전트로 전체 경로를 테스트하고, 잘못된 입력·타임아웃·프로세스 종료·결과 저장 실패를 확인한다. 에이전트 실패와 평가 도구/API 오류를 구별해 기록한다. |
++| 실행 간 간섭·채점 조작 | 실제 에이전트 코드를 실행하기 전에 격리된 임시 작업 공간, 시간·자원 제한, 종료 후 정리를 구현한다. 호스트 비밀정보와 불필요한 네트워크 접근을 차단하고, 에이전트가 수정할 수 없는 채점 기준으로 평가한다. 경계가 지켜지는지 통합 테스트한다. |
++| 결과 유실·형식 오류 | 저장 후 다시 읽어 값과 오류 상태를 확인한다. 중단된 실행을 완료 결과로 취급하지 않는다. |
++
++테스트는 구현 내부 구조보다 관찰 가능한 결과를 확인한다. 실제 모델 호출은 실행기·에이전트 연동·채점 변경의 영향을 확인할 때, 비용 한도를 정하고 수동 실행한다. 모델 점수의 단발성 하락을 일반 CI의 실패 조건으로 삼지 않는다.
++
++## 평가 결과의 신뢰성
++
++- 실행마다 도구 커밋, 과제·채점 기준 버전, 입력과 프롬프트, 에이전트·모델 식별자와 제공되는 버전, 설정·예산·환경·시드를 저장한다. 원본 응답, 생성 패치, 채점 로그, 실행 상태, 비용·시간도 남기되 비밀키는 기록하지 않는다.
++- 비교 전에 과제 집합, 실행 예산, 반복 횟수와 재시도 규칙을 정하고 양쪽에 동일하게 적용한다. 재시도 전 실패도 보존한다. 평가 도구 오류는 성능 실패와 분리해 공개하고 비교의 제한을 밝힌다.
++- 결과에는 과제별 성적, 실제 실행 횟수와 실행 간 변동을 함께 제시한다. 한 번의 실행으로 우열을 단정하지 않는다. 동일 시드도 외부 모델 응답의 재현을 보장하지 않으므로 원본 기록으로 채점을 다시 확인할 수 있게 한다.
++- 공개 과제의 학습 데이터 포함 가능성과 결과의 적용 범위를 밝힌다. 과제나 채점 기준이 바뀌면 버전을 바꾸고 기존 점수와 직접 비교하지 않는다.
++
++frontier-simplify: 변경마다 기본 검증과 자체 검토를 두는 이유는 실행·채점 회귀를 발견하기 위해서다. 다른 자동화가 같은 검증을 수행하면 중복 절차를 제거한다.
++
++skipped: ceremony — 별도 승인 단계·추적표·정기 보고; machinery — 개발 착수를 허가하는 검증기; pin — 임의의 커버리지 목표; metatest — 문서 형식 준수 검사.
+
+diff --git a/process.md b/process.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..25bb8b3b2b38f4f7dfc3a0547e499f87a3ef6c19
+--- /dev/null
++++ b/process.md
+@@ -0,0 +1,33 @@
++# 개발 프로세스와 검증 체계
++
++1인 메인테이너가 운영하는 초기 프로젝트다. 첫 제품은 로컬 CLI로 과제를 실행하고 결과를 파일로 저장한다고 가정한다. 목표는 실행·채점의 정확성과 평가 결과의 재현 가능성이다. 모델 성능의 변동과 도구 자체의 결함을 구분한다.
++
++## 개발 흐름
++
++1. 변경할 동작과 기대 결과를 짧게 적는다. 첫 구현은 고정 응답을 내는 가짜 에이전트로 `과제 로드 → 실행 → 채점 → 결과 저장`을 연결한다.
++2. 작은 변경 단위로 구현하고, 틀렸을 때 사용자가 영향을 받는 동작을 테스트한다. 버그 수정에는 같은 결함을 잡는 회귀 테스트를 붙인다.
++3. 첫 실행 경로가 생기면 로컬과 CI에서 같은 명령으로 포맷·린트와 오프라인 테스트를 실행한다. 메인테이너가 diff와 결과를 확인해 병합한다. 외부 기여도 같은 방식으로 검토한다.
++
++언어와 도구를 선택한 뒤 실제 검증 명령을 README에 적는다. CI는 외부 API나 비밀키 없이 실행한다. 첫 공개 배포 때 깨끗한 환경에서 설치하고 예제 과제 실행과 결과 읽기를 확인한다. 이후 설치·패키징 변경 때 이 확인을 반복한다.
++
++## 검증할 제품 동작
++
++| 위험 | 검증 방법 |
++| --- | --- |
++| 잘못된 채점·집계 | 정답을 아는 작은 과제로 성공·실패·부분 점수와 집계 결과를 확인한다. 실패·누락 실행을 성공률 분모에서 조용히 빼지 않는다. |
++| 실행 흐름의 결함 | 가짜 에이전트로 전체 경로를 테스트하고, 잘못된 입력·타임아웃·프로세스 종료·결과 저장 실패를 확인한다. 에이전트 실패와 평가 도구/API 오류를 구별해 기록한다. |
++| 실행 간 간섭·채점 조작 | 실제 에이전트 코드를 실행하기 전에 격리된 임시 작업 공간, 시간·자원 제한, 종료 후 정리를 구현한다. 호스트 비밀정보와 불필요한 네트워크 접근을 차단하고, 에이전트가 수정할 수 없는 채점 기준으로 평가한다. 경계가 지켜지는지 통합 테스트한다. |
++| 결과 유실·형식 오류 | 저장 후 다시 읽어 값과 오류 상태를 확인한다. 중단된 실행을 완료 결과로 취급하지 않는다. |
++
++테스트는 구현 내부 구조보다 관찰 가능한 결과를 확인한다. 실제 모델 호출은 실행기·에이전트 연동·채점 변경의 영향을 확인할 때, 비용 한도를 정하고 수동 실행한다. 모델 점수의 단발성 하락을 일반 CI의 실패 조건으로 삼지 않는다.
++
++## 평가 결과의 신뢰성
++
++- 실행마다 도구 커밋, 과제·채점 기준 버전, 입력과 프롬프트, 에이전트·모델 식별자와 제공되는 버전, 설정·예산·환경·시드를 저장한다. 원본 응답, 생성 패치, 채점 로그, 실행 상태, 비용·시간도 남기되 비밀키는 기록하지 않는다.
++- 비교 전에 과제 집합, 실행 예산, 반복 횟수와 재시도 규칙을 정하고 양쪽에 동일하게 적용한다. 재시도 전 실패도 보존한다. 평가 도구 오류는 성능 실패와 분리해 공개하고 비교의 제한을 밝힌다.
++- 결과에는 과제별 성적, 실제 실행 횟수와 실행 간 변동을 함께 제시한다. 한 번의 실행으로 우열을 단정하지 않는다. 동일 시드도 외부 모델 응답의 재현을 보장하지 않으므로 원본 기록으로 채점을 다시 확인할 수 있게 한다.
++- 공개 과제의 학습 데이터 포함 가능성과 결과의 적용 범위를 밝힌다. 과제나 채점 기준이 바뀌면 버전을 바꾸고 기존 점수와 직접 비교하지 않는다.
++
++frontier-simplify: 변경마다 기본 검증과 자체 검토를 두는 이유는 실행·채점 회귀를 발견하기 위해서다. 다른 자동화가 같은 검증을 수행하면 중복 절차를 제거한다.
++
++skipped: ceremony — 별도 승인 단계·추적표·정기 보고; machinery — 개발 착수를 허가하는 검증기; pin — 임의의 커버리지 목표; metatest — 문서 형식 준수 검사.
+
+codex
+[process.md](/private/tmp/frontier-benchmark.ugxUg6/on/process.md)에 저장했습니다.
+
+1인 운영에 맞춘 개발 흐름, 자동 테스트와 CI, 실행 격리, 채점 정확성, 평가의 재현성과 공정한 비교 기준을 담았습니다. 별도 승인 단계나 임의의 품질 수치 목표는 제외했습니다.
+diff --git a/process.md b/process.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..25bb8b3b2b38f4f7dfc3a0547e499f87a3ef6c19
+--- /dev/null
++++ b/process.md
+@@ -0,0 +1,33 @@
++# 개발 프로세스와 검증 체계
++
++1인 메인테이너가 운영하는 초기 프로젝트다. 첫 제품은 로컬 CLI로 과제를 실행하고 결과를 파일로 저장한다고 가정한다. 목표는 실행·채점의 정확성과 평가 결과의 재현 가능성이다. 모델 성능의 변동과 도구 자체의 결함을 구분한다.
++
++## 개발 흐름
++
++1. 변경할 동작과 기대 결과를 짧게 적는다. 첫 구현은 고정 응답을 내는 가짜 에이전트로 `과제 로드 → 실행 → 채점 → 결과 저장`을 연결한다.
++2. 작은 변경 단위로 구현하고, 틀렸을 때 사용자가 영향을 받는 동작을 테스트한다. 버그 수정에는 같은 결함을 잡는 회귀 테스트를 붙인다.
++3. 첫 실행 경로가 생기면 로컬과 CI에서 같은 명령으로 포맷·린트와 오프라인 테스트를 실행한다. 메인테이너가 diff와 결과를 확인해 병합한다. 외부 기여도 같은 방식으로 검토한다.
++
++언어와 도구를 선택한 뒤 실제 검증 명령을 README에 적는다. CI는 외부 API나 비밀키 없이 실행한다. 첫 공개 배포 때 깨끗한 환경에서 설치하고 예제 과제 실행과 결과 읽기를 확인한다. 이후 설치·패키징 변경 때 이 확인을 반복한다.
++
++## 검증할 제품 동작
++
++| 위험 | 검증 방법 |
++| --- | --- |
++| 잘못된 채점·집계 | 정답을 아는 작은 과제로 성공·실패·부분 점수와 집계 결과를 확인한다. 실패·누락 실행을 성공률 분모에서 조용히 빼지 않는다. |
++| 실행 흐름의 결함 | 가짜 에이전트로 전체 경로를 테스트하고, 잘못된 입력·타임아웃·프로세스 종료·결과 저장 실패를 확인한다. 에이전트 실패와 평가 도구/API 오류를 구별해 기록한다. |
++| 실행 간 간섭·채점 조작 | 실제 에이전트 코드를 실행하기 전에 격리된 임시 작업 공간, 시간·자원 제한, 종료 후 정리를 구현한다. 호스트 비밀정보와 불필요한 네트워크 접근을 차단하고, 에이전트가 수정할 수 없는 채점 기준으로 평가한다. 경계가 지켜지는지 통합 테스트한다. |
++| 결과 유실·형식 오류 | 저장 후 다시 읽어 값과 오류 상태를 확인한다. 중단된 실행을 완료 결과로 취급하지 않는다. |
++
++테스트는 구현 내부 구조보다 관찰 가능한 결과를 확인한다. 실제 모델 호출은 실행기·에이전트 연동·채점 변경의 영향을 확인할 때, 비용 한도를 정하고 수동 실행한다. 모델 점수의 단발성 하락을 일반 CI의 실패 조건으로 삼지 않는다.
++
++## 평가 결과의 신뢰성
++
++- 실행마다 도구 커밋, 과제·채점 기준 버전, 입력과 프롬프트, 에이전트·모델 식별자와 제공되는 버전, 설정·예산·환경·시드를 저장한다. 원본 응답, 생성 패치, 채점 로그, 실행 상태, 비용·시간도 남기되 비밀키는 기록하지 않는다.
++- 비교 전에 과제 집합, 실행 예산, 반복 횟수와 재시도 규칙을 정하고 양쪽에 동일하게 적용한다. 재시도 전 실패도 보존한다. 평가 도구 오류는 성능 실패와 분리해 공개하고 비교의 제한을 밝힌다.
++- 결과에는 과제별 성적, 실제 실행 횟수와 실행 간 변동을 함께 제시한다. 한 번의 실행으로 우열을 단정하지 않는다. 동일 시드도 외부 모델 응답의 재현을 보장하지 않으므로 원본 기록으로 채점을 다시 확인할 수 있게 한다.
++- 공개 과제의 학습 데이터 포함 가능성과 결과의 적용 범위를 밝힌다. 과제나 채점 기준이 바뀌면 버전을 바꾸고 기존 점수와 직접 비교하지 않는다.
++
++frontier-simplify: 변경마다 기본 검증과 자체 검토를 두는 이유는 실행·채점 회귀를 발견하기 위해서다. 다른 자동화가 같은 검증을 수행하면 중복 절차를 제거한다.
++
++skipped: ceremony — 별도 승인 단계·추적표·정기 보고; machinery — 개발 착수를 허가하는 검증기; pin — 임의의 커버리지 목표; metatest — 문서 형식 준수 검사.
+
+tokens used
+14,424
+[process.md](/private/tmp/frontier-benchmark.ugxUg6/on/process.md)에 저장했습니다.
+
+1인 운영에 맞춘 개발 흐름, 자동 테스트와 CI, 실행 격리, 채점 정확성, 평가의 재현성과 공정한 비교 기준을 담았습니다. 별도 승인 단계나 임의의 품질 수치 목표는 제외했습니다.

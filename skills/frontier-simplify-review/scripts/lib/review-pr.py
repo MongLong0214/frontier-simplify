@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from protocol import digest, git, require, Rejected, review_context
+from protocol import digest, git, require, Rejected, review_context, artifact_root
 import catalog
 import ledger
 
@@ -28,7 +28,7 @@ def main():
     require(a.repository and a.pr > 0, 'consumer', 'repository and positive PR number are required')
     repo = Path(a.repository).resolve()
     origin = git(repo, 'remote', 'get-url', 'origin').decode().strip()
-    root = Path(os.environ.get('REVIEW_ARTIFACTS', str(Path.home() / '.sol-simplify-review'))).resolve()
+    root = artifact_root()
     require(not root.is_relative_to(repo), 'host-location', 'artifact root must be outside consumer checkout')
     # Stable across consumer worktrees; the trusted host supplies the remote and PR identity.
     host = root / 'consumers' / digest(origin.encode())[:16]

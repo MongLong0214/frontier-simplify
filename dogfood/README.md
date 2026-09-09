@@ -1,5 +1,9 @@
 # Consumer runs
 
+Frontier-simplify's local consumer runner supports the Fable/Astra-oriented workflow through
+the executor available on your host. `REVIEW_CODEX_MODEL=gpt-6-astra` selects Astra for Codex;
+Fable use depends on your configured executor, not an assumed model alias in this runner.
+
 `consumers.json` configures PR discovery and portability checks. `run.py` discovers open PRs and
 calls the review entrypoint. It does not post, push or merge. Registration is configuration; it is
 not evidence that a scheduler ran, a defect was fixed, or a merge completed.
@@ -30,8 +34,10 @@ The installer starts the poller immediately and records the current PATH, select
 timeout and supplied prompt/lesson settings; rerun it after changing these settings or moving this
 installation. It does not install dependencies or copy authentication tokens. Use a working Python
 with the standard `plistlib` module. Logs are `dogfood.log` and `dogfood.err` in the evidence directory.
-To inspect the installed job, run `launchctl print "gui/$(id -u)/dev.sol-simplify.review-dogfood"`.
+To inspect the installed job, run `launchctl print "gui/$(id -u)/dev.frontier-simplify.review-dogfood"`.
 Plugin installation alone does not install this job.
+When replacing the old `dev.sol-simplify.review-dogfood` job, the installer stops it and keeps
+its plist as `.plist.disabled` before starting the renamed job. Keep the same artifact directory.
 
 It needs working `gh`, Git network access and an authenticated reviewer. Auto mode reuses unchanged
 inputs within a cumulative **three-attempt PR budget**. Changes to heads, target tips, supplied
@@ -41,7 +47,7 @@ a changed base or rewritten history starts a fresh scope review without resettin
 Failures and interruptions consume attempts too. The third attempt
 hands off and later polls launch no reviewer. This guarantees termination of automatic attempts,
 not safe merge convergence. See the
-[runner guide](../skills/sol-simplify-review/README.md) for optional remediation responses and retries.
+[runner guide](../skills/frontier-simplify-review/README.md) for optional remediation responses and retries.
 
 Runner exit 10 means review evidence was recorded; 11 means the automatic budget ended in a human
 handoff. The poller treats these as completed invocations,
@@ -65,7 +71,7 @@ supports broader investigation, while a cross-consumer claim needs the source co
 before it can be counted as independently reproduced. A direct user observation is attributed as
 such, not discarded and not silently upgraded. No prose parser grants this status.
 
-Use the [witness replay helper](../skills/sol-simplify-review/README.md#replay-a-regression-and-feed-it-into-later-reviews)
+Use the [witness replay helper](../skills/frontier-simplify-review/README.md#replay-a-regression-and-feed-it-into-later-reviews)
 to turn a selected finding into a measured before/after contrast. The helper runs the same named
 assertion on both commits and only publishes a lead when it fails before and passes after. Add
 `"lessons": "/host/private/lessons/consumer"` to that consumer's entry, or set `REVIEW_LESSONS` for
@@ -80,6 +86,6 @@ No scheduler or consumer configuration is silently installed by a replay. The de
 facet regression and Node empty-selector failure witnesses are recorded in
 [REASSESSMENT.md](REASSESSMENT.md). This proves an executable feedback path, not a model-recall gain.
 
-`sol-simplify: this poller supplies consumer feedback; remove it when no configured consumer uses
-it.` To uninstall on macOS, boot out `gui/$(id -u)/dev.sol-simplify.review-dogfood` with `launchctl`
+`frontier-simplify: this poller supplies consumer feedback; remove it when no configured consumer uses
+it.` To uninstall on macOS, boot out `gui/$(id -u)/dev.frontier-simplify.review-dogfood` with `launchctl`
 and remove its matching plist from `~/Library/LaunchAgents`.

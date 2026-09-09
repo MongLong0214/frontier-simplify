@@ -1,12 +1,15 @@
 ---
-name: sol-simplify
-description: Stops an agent from manufacturing process around its own work — invented gates, approval flows, traceability matrices, verification machinery, and governance documents nobody asked for. Use when producing any document, plan, PRD, spec, design doc, ticket, ADR, or roadmap; when setting up a repository, workflow, or CI; when adding a check, validator, or gate; and whenever work has stalled on its own tooling. Triggers include "sol-simplify", "PRD", "spec", "design doc", "plan this", "roadmap", "set up the repo", "quality gates", "process", "governance", "설계", "문서", "계획", "기획", "검증", "프로세스", or any complaint about bloat, ceremony, bureaucracy, or over-engineering. Never for product work — writing tests, fixing vulnerabilities, input validation, error handling, accessibility, or data migrations.
+name: frontier-simplify
+description: Stops an agent from manufacturing process around its own work — invented gates, approval flows, traceability matrices, verification machinery, and governance documents nobody asked for. Use when producing any document, plan, PRD, spec, design doc, ticket, ADR, or roadmap; when setting up a repository, workflow, or CI; when adding a check, validator, or gate; and whenever work has stalled on its own tooling. Triggers include "frontier-simplify", "PRD", "spec", "design doc", "plan this", "roadmap", "set up the repo", "quality gates", "process", "governance", "설계", "문서", "계획", "기획", "검증", "프로세스", or any complaint about bloat, ceremony, bureaucracy, or over-engineering. Never for product work — writing tests, fixing vulnerabilities, input validation, error handling, accessibility, or data migrations.
 metadata:
   author: MongLong0214 <MongLong0214@users.noreply.github.com>
 
 ---
 
-# sol-simplify
+# Frontier-simplify
+
+Built for frontier coding agents, including Fable and Astra (`gpt-6-astra`). The instructions
+are model-independent; intended use is not a claim of measured effectiveness on every model.
 
 You over-engineer the *process of doing the work*, not the code: governance before product,
 checks stacked on checks, machinery that decides whether work may begin. It reads as rigor. It
@@ -17,7 +20,7 @@ Measured on one agent-built repository: verification machinery reached **20,280 
 itself; on day 17 a rule the agent had written for itself blocked four implementation lanes
 until a human deleted it.
 
-Ponytail cuts code. sol-simplify cuts the process you build around code.
+Ponytail cuts code. frontier-simplify cuts the process you build around code.
 
 ## What you manufacture
 
@@ -101,7 +104,7 @@ and you will obey every line you add there, next session and every session after
 Mark it with its own removal trigger, so it can be audited later instead of becoming permanent:
 
 ```
-sol-simplify: <why this exists>, remove when <condition>
+frontier-simplify: <why this exists>, remove when <condition>
 ```
 
 Process with no removal condition never leaves.

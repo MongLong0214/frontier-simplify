@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg?v=3">
-    <img src="assets/logo.svg?v=3" width="480" alt="sol-simplify — scissors snipping, beside the wordmark">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg?v=4">
+    <img src="assets/logo.svg?v=4" width="480" alt="Frontier-simplify — skills for Fable and Astra">
   </picture>
 </p>
 
@@ -13,13 +13,14 @@
   <img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square" alt="MIT license">
   <img src="https://img.shields.io/badge/install-one%20file-111111?style=flat-square" alt="One file">
   <img src="https://img.shields.io/badge/works%20with-Codex%20%C2%B7%20Claude%20Code%20%C2%B7%20Cursor-111111?style=flat-square" alt="Works with">
-  <img src="https://img.shields.io/badge/measured%20on-gpt--5.6--sol-111111?style=flat-square" alt="Measured on gpt-5.6-sol">
+  <img src="https://img.shields.io/badge/measured%20on-gpt--6--astra-111111?style=flat-square" alt="Measured on gpt-6-astra">
 </p>
 
 <p align="center">
-  <strong>Your agent stops building bureaucracy around its own work.</strong><br>
+  <strong>Built for Fable and Astra: less invented process, fewer repeated reviews.</strong><br>
   <sub>One markdown file. Nothing to configure, nothing to run.<br>
-  <b>Measured: every run without it invented process nobody asked for. Almost every run with it invented none.</b><br>
+  <b>Astra spot check: 246 lines without the skill, 33 with it.</b><br>
+  One process-design scenario, one run per arm. Length is not a quality score. Fable is not benchmarked.<br>
   <a href="benchmarks/">see how that was measured</a></sub>
 </p>
 
@@ -29,9 +30,15 @@
 
 ---
 
-Coding agents do not only over-engineer code. They build **bureaucracy around their own work** — gates, registries, traceability matrices, validators for the validators — and then spend the project maintaining it. Eventually the machinery outgrows the product and starts refusing to let work through.
+# Frontier-simplify for Fable and Astra
 
-The core `sol-simplify` skill is one Markdown file; no plugin or hook is required.
+Built for frontier coding agents including **Fable** and **Astra (`gpt-6-astra`)**. Coding agents
+do not only over-engineer code. They build **bureaucracy around their own work** — gates,
+registries, traceability matrices, validators for the validators — and then spend the project
+maintaining it. Frontier-simplify cuts that invented process and bounds automatic review attempts.
+The skills are model-independent; targeting Fable and Astra does not claim measured results for both.
+
+The core `frontier-simplify` skill is one Markdown file; no plugin or hook is required.
 The optional review skill adds an explicitly invoked local runner, described below.
 
 ## Install
@@ -41,34 +48,47 @@ Pick whichever fits your agent. Then just work — the agent loads the skill on 
 **Codex** — as a plugin, versioned and updatable:
 
 ```bash
-codex plugin marketplace add MongLong0214/sol-simplify
-codex plugin add sol-simplify@sol-simplify
+codex plugin marketplace add MongLong0214/frontier-simplify
+codex plugin add frontier-simplify@frontier-simplify
 ```
 
 **Claude Code:**
 
 ```
-/plugin marketplace add MongLong0214/sol-simplify
-/plugin install sol-simplify@sol-simplify
+/plugin marketplace add MongLong0214/frontier-simplify
+/plugin install frontier-simplify@frontier-simplify
 ```
 
 **Or just copy the file** — into its own folder under `~/.codex/skills/`, `~/.claude/skills/`, or any tool's rules directory (Cursor, Windsurf, Cline, Copilot). It is plain markdown with standard frontmatter. Keep the folder: a loose `SKILL.md` sitting directly in `skills/` still loads, but it will shadow a plugin install and quietly serve the older copy.
 
 ```bash
-mkdir -p ~/.codex/skills/sol-simplify
-curl -sL https://raw.githubusercontent.com/MongLong0214/sol-simplify/main/skills/sol-simplify/SKILL.md \
-  -o ~/.codex/skills/sol-simplify/SKILL.md
+mkdir -p ~/.codex/skills/frontier-simplify
+curl -sL https://raw.githubusercontent.com/MongLong0214/frontier-simplify/main/skills/frontier-simplify/SKILL.md \
+  -o ~/.codex/skills/frontier-simplify/SKILL.md
 ```
 
 To uninstall, delete the file.
+
+### Upgrading from sol-simplify
+
+Version 2.0.0 renames the repository, marketplace, plugin and three skill directories to
+`frontier-simplify`, `frontier-simplify-audit` and `frontier-simplify-review`. Remove the old plugin
+or standalone skill copies through the same installation method, then install using the commands
+above; do not leave both identities active. Update saved script paths and reinstall a local review
+hook or poller from the renamed checkout if you use one. Existing review history stays in place:
+the old `~/.sol-simplify-review` root is automatically reused so the PR budget cannot reset.
+Historical benchmark transcripts and the original review-design/reassessment documents keep their
+original names and model identities; they are evidence, not current installation instructions.
 
 ## What it does
 
 Asked to design a development process for a project with **no code yet and one maintainer**:
 
+The example below is the historical `gpt-5.6-sol` measurement, not an Astra or Fable result.
+
 **Without** — 437 lines, 35 sections: risk-based quality gates, six test tiers, a CI operating model, a release-candidate checklist, a defect taxonomy, project health metrics, and a section on maintaining the document itself.
 
-**With sol-simplify** — 58 lines, 6 sections. And it says why:
+**With frontier-simplify** — 58 lines, 6 sections. And it says why:
 
 > No ceremonial self-approval PRs when working alone.
 >
@@ -82,7 +102,7 @@ The skill was never mentioned in the prompt. Codex found it and applied it on it
 Process it decides to keep, it marks with a removal condition — so it can be audited later instead of becoming permanent:
 
 ```
-sol-simplify: <why this exists>, remove when <condition>
+frontier-simplify: <why this exists>, remove when <condition>
 ```
 
 ## What it never cuts
@@ -96,22 +116,23 @@ Restraint applies to process the agent invented, never to the product's real obl
 A second skill diagnoses an existing repository instead of preventing a new one. Install it the same way, then say *"audit this repo for ceremony"*.
 
 ```bash
-mkdir -p ~/.codex/skills/sol-simplify-audit
-curl -sL https://raw.githubusercontent.com/MongLong0214/sol-simplify/main/skills/sol-simplify-audit/SKILL.md \
-  -o ~/.codex/skills/sol-simplify-audit/SKILL.md
+mkdir -p ~/.codex/skills/frontier-simplify-audit
+curl -sL https://raw.githubusercontent.com/MongLong0214/frontier-simplify/main/skills/frontier-simplify-audit/SKILL.md \
+  -o ~/.codex/skills/frontier-simplify-audit/SKILL.md
 ```
 
 It measures the machinery-to-product ratio, finds maintenance commits that shipped nothing, ranks what to delete, and reports only — it changes no files.
 
 ## Stop repeating the same code review
 
-The optional **sol-simplify-review** skill preserves concrete findings and checks repairs against
+The optional **frontier-simplify-review** skill preserves concrete findings and checks repairs against
 them. Its runner is for one maintainer on a trusted local host, not a merge gate or hosted service.
 Use a separate installation of this repository, outside the checkout being reviewed:
 
 ```sh
-skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto codex
-skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" status codex
+export REVIEW_CODEX_MODEL=gpt-6-astra  # Astra when using the Codex executor
+skills/frontier-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto codex
+skills/frontier-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" status codex
 ```
 
 - Identical inputs reuse the latest attempt. Code, target, supplied context, lessons, response,
@@ -134,7 +155,7 @@ The runner needs Bash, Git and Python 3.9+; PR discovery also needs authenticate
 reviews need Codex or Claude Code. Full offline tests and optional Node witness replay need Node 22+.
 
 ```sh
-bash skills/sol-simplify-review/scripts/selftest.sh
+bash skills/frontier-simplify-review/scripts/selftest.sh
 python3 dogfood/run.py --status  # inspect configured consumers; no model calls
 python3 dogfood/run.py           # one discovery/review pass, not a daemon
 ```
@@ -142,7 +163,7 @@ python3 dogfood/run.py           # one discovery/review pass, not a daemon
 Edit the maintainer-local paths in `dogfood/consumers.json`, or set `REVIEW_CONSUMERS_CONFIG` to
 your own file. Plugin installation starts no scheduled work. The optional macOS poller, separate
 responses, and measured regression leads are covered in the [consumer guide](dogfood/README.md)
-and [runner guide](skills/sol-simplify-review/README.md). Consumer reviews never push, post or merge.
+and [runner guide](skills/frontier-simplify-review/README.md). Consumer reviews never push, post or merge.
 
 ## Why this exists
 
@@ -168,6 +189,14 @@ Every individual file there is defensible. Code-level advice — *use the stdlib
 Stages 3 and 4 are what nothing else addresses, and the reason a one-line prompt is not enough.
 
 ## Does it work?
+
+**Astra (`gpt-6-astra`), 2026-09-09:** a fresh four-arm `02-process` spot check produced 246 lines
+plain, 81 with the Korean one-line instruction, 152 with the English one-line instruction, and
+33 with Frontier-simplify. The transcript confirms the skill was read in the treatment arm.
+This is one run per arm, not a correctness score or proof of review convergence.
+[Raw outputs, setup and limits](benchmarks/README.md#astra-spot-check-2026-09-09).
+
+The five-scenario table below is the **historical `gpt-5.6-sol` result**, not a Fable or Astra score.
 
 Five ordinary requests, each sent three ways — plain, with a *"keep it simple"* sentence added,
 and with the skill installed. Same model, same prompt every time.
@@ -198,17 +227,24 @@ number traces to a line in the committed output; full detail and limits are in
 ## FAQ
 
 **How is this different from code-minimalism skills like Ponytail?**
-Different layer. Those ask *"can this be one line?"* about code; sol-simplify asks *"should this check exist at all?"* about process. They compose — run both if you want both.
+Different layer. Those ask *"can this be one line?"* about code; frontier-simplify asks *"should this check exist at all?"* about process. They compose — run both if you want both.
 
 **Will this make the agent skip tests?**
 Measured: no. Every skill run on the incident scenario fixed the root cause and added the regression test. Tests that exercise behavior are in the never-cut list; if you see it cut a real one, that is a bug worth an issue.
 
 **Does it work on other models?**
-Unknown. It was written for and measured on `gpt-5.6-sol`, whose ambition tuning is what produces this failure mode. Results elsewhere are welcome.
+Fable and Astra (`gpt-6-astra`) are the intended frontier-model use cases. The instructions are
+portable, but effectiveness must be measured per model. The historical five-scenario results retain
+their original `gpt-5.6-sol` attribution; they are not Fable or Astra scores. No Fable benchmark
+result has been recorded yet. See [benchmark evidence and limits](benchmarks/README.md).
 
 **Why is the core skill just Markdown?**
-The core `sol-simplify` skill is one Markdown file. The optional review skill also ships an explicitly
+The core `frontier-simplify` skill is one Markdown file. The optional review skill also ships an explicitly
 invoked runner, regression replay and a local test hook; plugin installation alone starts no poller.
+
+**Releases or Packages?**
+Use [GitHub Releases](https://github.com/MongLong0214/frontier-simplify/releases) for tagged versions
+and source archives. This plugin does not need a separate registry package or container image.
 
 ## License
 
