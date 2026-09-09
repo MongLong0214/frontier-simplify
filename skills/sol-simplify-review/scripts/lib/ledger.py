@@ -1,5 +1,6 @@
 """Host receipts preserve evidence, not merge permission. Legacy outcomes remain historical."""
 import json
+import fcntl
 import re
 from pathlib import Path
 import subprocess
@@ -118,8 +119,43 @@ def recompute(repo, directory, start, checkout=None):
 
 def evidence_available(checks, end):
     # A removed checkout cannot be inspected again. Preserve its recorded physical failures.
-    return bool(end.get('executed')) and all(c['ok'] for c in checks) and all(
+    return bool(end.get('executed')) and not (end.get('reason') and not end.get('guards')) and all(c['ok'] for c in checks) and all(
         c['ok'] for c in end.get('guards', []) if c['guard'] in {'checkout', 'seal-location'})
+
+
+def running(root):
+    """Inspect the existing OS lock, without creating state or trusting a stale PID."""
+    try:
+        with (root / '.lock').open('r') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+    except FileNotFoundError:
+        pass
+    return False
+
+
+def status(root, repo, head, base=None, context=None):
+    if running(root):
+        print(f'RUNNING: {root}; requested head {head}')
+        return
+    starts, ends, _ = audit(root, repo)
+    if not starts:
+        print(f'NOT_REVIEWED: requested head {head}; 0/{MAX_ROUNDS} attempts')
+        return
+    n = max(starts)
+    start, end = starts[n], ends.get(n, {})
+    available = evidence_available(recompute(repo, root / f'round-{n:04}', start), end) if end else False
+    state = 'INTERRUPTED' if not end else 'RECORDED' if available else 'FAILED'
+    same = (start['head_sha'] == head and (base is None or start.get('base_sha') == base)
+            and context is not None and start.get('context') == context)
+    freshness = 'FRESH' if same and available and end.get('fresh_at_finish', True) else 'STALE'
+    print(f'{state} {freshness}: reviewed head {start["head_sha"]}; requested head {head}; '
+          f'{n}/{MAX_ROUNDS} attempts' + ('; HANDOFF' if n >= MAX_ROUNDS else ''))
+    print(f'Artifact: {root / f"round-{n:04}" / "ARTIFACT.md"}')
+    if end.get('freshness_reason') or end.get('reason'):
+        print(end.get('freshness_reason') or end['reason'])
 
 
 def audit(root, repo):

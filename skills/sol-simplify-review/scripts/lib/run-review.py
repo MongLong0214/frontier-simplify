@@ -2,15 +2,17 @@
 """Trusted host: freeze inputs, run one reviewer, recompute guards, append a receipt."""
 import argparse
 import fcntl
+import math
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown,
-                      protocol_sha256, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
+                      protocol_sha256, review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
 import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -40,19 +42,33 @@ def copy_input(source, directory, name):
     freeze(directory / name, Path(source).read_bytes())
 
 
-def main():
+def main(argv=None, freshness_check=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('phase', choices=['1', '2', 'report', 'path', 'hunks'])
+    p.add_argument('phase', choices=['1', '2', 'auto', 'status', 'report', 'path', 'hunks'])
     p.add_argument('repo', type=Path)
     p.add_argument('head', help='commit/ref; ignored for report/path')
     p.add_argument('pr', help='stable PR ID; actual round is assigned by the host')
     p.add_argument('base', nargs='?', default='')
     p.add_argument('executor', nargs='?', default='')
-    a = p.parse_args()
+    a = p.parse_args(argv)
     repo = a.repo.resolve()
     root = root_for(repo, a.pr)
     if a.phase == 'path':
         print(root)
+        return 0
+    executor = a.executor or os.environ.get('REVIEW_EXECUTOR', 'codex')
+    def caller_inputs():
+        source = os.environ.get('REVIEW_RESPONSE')
+        response = Path(source).read_bytes() if source else None
+        context = review_context(SCRIPTS, executor, response)
+        if os.environ.get('REVIEW_TARGET_BRANCH') and not os.environ.get('REVIEW_TARGET_OID'):
+            context['target_sha'] = git(repo, 'rev-parse', '--verify',
+                                        os.environ['REVIEW_TARGET_BRANCH'] + '^{commit}').decode().strip()
+        return context, response
+    if a.phase == 'status':
+        head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
+        base = git(repo, 'rev-parse', '--verify', a.base + '^{commit}').decode().strip() if a.base else None
+        ledger.status(root, repo, head, base, caller_inputs()[0])
         return 0
     if a.phase in {'report', 'hunks'}:
         if a.phase == 'report':
@@ -81,26 +97,66 @@ def main():
         if len(starts) >= MAX_ROUNDS:
             ledger.handoff(root, repo, head)
             return HANDOFF
-        phase = int(a.phase)
+        context, response = caller_inputs()
+        phase = (2 if originals else 1) if a.phase == 'auto' else int(a.phase)
+        if a.base:
+            base = git(repo, 'rev-parse', '--verify', a.base + '^{commit}').decode().strip()
+        elif phase == 2 and originals:
+            base = originals[-1][2]['base_sha']
+        else:
+            target = os.environ.get('REVIEW_TARGET_BRANCH', '')
+            require(target, 'base', 'provide merge-base or REVIEW_TARGET_BRANCH; current branch is not a target default')
+            base = git(repo, 'merge-base', target, head).decode().strip()
+        if a.phase == 'auto' and originals:
+            original = originals[-1][2]
+            if base != original['base_sha'] or run([
+                    'git', '-C', repo, 'merge-base', '--is-ancestor', original['head_sha'], head]).returncode != 0:
+                phase = 1
+
+        def check_freshness():
+            require(git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip() == head,
+                    'stale-head', 'requested head changed during review')
+            if a.base:
+                require(git(repo, 'rev-parse', '--verify', a.base + '^{commit}').decode().strip() == base,
+                        'stale-base', 'requested base changed during review')
+            require(caller_inputs()[0] == context, 'stale-inputs', 'review inputs changed during review')
+            if freshness_check:
+                freshness_check()
+
+        latest = starts[max(starts)] if starts else None
+        if (a.phase == 'auto' and latest and latest['head_sha'] == head
+                and latest.get('base_sha') == base and latest.get('context') == context):
+            end = ends.get(latest['round'], {})
+            ledger.report(root, repo)
+            try:
+                check_freshness()
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError) as e:
+                print('review: STALE or unavailable: ' + str(e), file=sys.stderr)
+                return FAILED
+            available = ledger.evidence_available(ledger.recompute(
+                repo, root / f"round-{latest['round']:04}", latest), end)
+            return review_exit(available and end.get('fresh_at_finish', True), len(starts))
         n = len(starts) + 1
         d = root / f'round-{n:04}'
         d.mkdir()
         inputs = []
         start = {'event': 'started', 'round': n, 'phase': phase, 'head_sha': head,
-                 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE, 'inputs': {}}
+                 'base_sha': base, 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE,
+                 'inputs': {}, 'context': context}
         started = False
         executed = False
+        finished = False
         clone = None
+        child = None
+        old_handlers = {}
+        def interrupted(signum, frame):
+            raise InterruptedError(f'review interrupted by {signal.Signals(signum).name}')
         try:
-            if a.base:
-                base = git(repo, 'rev-parse', '--verify', a.base + '^{commit}').decode().strip()
-            elif phase == 2 and originals:
-                base = originals[-1][2]['base_sha']
-            else:
-                target = os.environ.get('REVIEW_TARGET_BRANCH', '')
-                require(target, 'base', 'provide merge-base or REVIEW_TARGET_BRANCH; current branch is not a target default')
-                base = git(repo, 'merge-base', target, head).decode().strip()
-            start['base_sha'] = base
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                old_handlers[sig] = signal.signal(sig, interrupted)
+            timeout = float(os.environ.get('REVIEW_TIMEOUT', '1800'))
+            require(math.isfinite(timeout) and timeout > 0, 'timeout', 'REVIEW_TIMEOUT must be positive finite seconds')
+            require(executor in {'codex', 'claude', 'stub'}, 'executor', 'use codex, claude, or stub')
             require(run(['git', '-C', repo, 'merge-base', '--is-ancestor', base, head]).returncode == 0,
                     'ancestry', 'base is not an ancestor of head')
             if phase == 2:
@@ -120,11 +176,8 @@ def main():
                 start['previous_round'] = prior
                 copy_input(root / f'round-{prior:04}' / 'ARTIFACT.md', d, 'PREVIOUS_REVIEW.md')
                 inputs.append('PREVIOUS_REVIEW.md')
-                response = os.environ.get('REVIEW_RESPONSE', '')
-                if response:
-                    copy_input(response, d, 'IMPLEMENTER_RESPONSE.md')
-                else:
-                    freeze(d / 'IMPLEMENTER_RESPONSE.md', b'No implementer response supplied. Inspect the complete remediation diff.\n')
+                freeze(d / 'IMPLEMENTER_RESPONSE.md', response if response is not None else
+                       b'No implementer response supplied. Inspect the complete remediation diff.\n')
                 inputs.append('IMPLEMENTER_RESPONSE.md')
                 freeze(d / 'REMEDIATION.patch', git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', r1head, head))
                 freeze(d / 'REMEDIATION_CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', r1head, head))
@@ -143,7 +196,8 @@ def main():
                       'INVENTORY_INTEGRITY_RESULT': 'VERIFIED',
                       'REQUIREMENT_SOURCES_OR_NONE': os.environ.get('REVIEW_REQUIREMENTS', 'none'),
                       'KNOWN_ROUTED_OR_NONE': os.environ.get('REVIEW_ROUTED', 'none'),
-                      'PROJECT_CLASS_CATALOG_OR_NONE': os.environ.get('REVIEW_CATALOG', 'none'),
+                      'PROJECT_CLASS_CATALOG_OR_NONE': '\n\n'.join(filter(None, [
+                          os.environ.get('REVIEW_CATALOG', 'none'), os.environ.get('REVIEW_HISTORY', '')])),
                       'FULL_SUITE_STATUS_OR_UNKNOWN': os.environ.get('REVIEW_SUITE_STATUS', 'UNKNOWN'),
                       'TOOL_NOTES_OR_NONE': os.environ.get('REVIEW_TOOL_NOTES', 'none')}
             rendered = run([sys.executable, SCRIPTS / 'lib/render-prompt.py', SKILL, phase,
@@ -152,7 +206,7 @@ def main():
             freeze(d / 'prompt.txt', rendered.stdout)
             inputs.append('prompt.txt')
             start.update(inputs=ledger.hashes(d, inputs), skill_sha256=protocol_sha256(SCRIPTS),
-                         executor=a.executor or os.environ.get('REVIEW_EXECUTOR', 'codex'))
+                         executor=executor)
             ledger.append(root, start)
             started = True
             # Clone locally so consumer .git and its shared worktrees remain untouched.
@@ -163,8 +217,8 @@ def main():
             # then built its own short worktree to get the evidence, which is evidence produced
             # outside the seal, and that is worse than the failing tests. The path is still new
             # every round, so no standing trust accumulates.
-            base = Path('/private/tmp') if Path('/private/tmp').is_dir() else None
-            clone = Path(tempfile.mkdtemp(prefix='r', dir=base) if base
+            temp_base = Path('/private/tmp') if Path('/private/tmp').is_dir() else None
+            clone = Path(tempfile.mkdtemp(prefix='r', dir=temp_base) if temp_base
                          else tempfile.mkdtemp(prefix='review-checkout-'))
             cp = run(['git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', repo, clone])
             require(cp.returncode == 0, 'checkout', cp.stderr.decode().strip())
@@ -187,10 +241,10 @@ def main():
                      else executor)
             print(f'review: round {n}, phase {phase}, head {head}, executor {executor} ({model})',
                   file=sys.stderr)
-            executed = True
             if executor == 'stub':
                 # Same guards and receipt, but never an eligible merge result.
                 shutil.copyfile(os.environ['REVIEW_STUB'], d / 'events.jsonl')
+                executed = True
                 (d / 'executor.err').write_text('test fixture executor\n')
                 rc = 0
             else:
@@ -212,28 +266,61 @@ def main():
                 else:
                     raise Rejected('GUARD FAIL [executor] use codex, claude, or stub')
                 with (d / 'events.jsonl').open('wb') as out, (d / 'executor.err').open('wb') as err:
-                    rc = subprocess.run(cmd, cwd=clone, stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env).returncode
+                    child = subprocess.Popen(cmd, cwd=clone, stdout=out, stderr=err,
+                                             stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+                    executed = True
+                    try:
+                        rc = child.wait(timeout=timeout)
+                    finally:
+                        # A timeout, cancellation or exited parent must not leave its tool
+                        # children writing into a checkout that is about to be removed.
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        child.wait()
             (d / 'executor-exit.txt').write_text(str(rc))
             (d / 'checkout-head.txt').write_bytes(git(clone, 'rev-parse', 'HEAD'))
             artifact = run([sys.executable, SCRIPTS / 'lib/extract.py', d / 'events.jsonl', '--final'])
             freeze(d / 'ARTIFACT.md', artifact.stdout)
             checks = ledger.recompute(repo, d, start, clone)
             recorded = all(c['ok'] for c in checks)
+            fresh, freshness_reason = True, ''
+            try:
+                check_freshness()
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError) as e:
+                fresh, freshness_reason = False, str(e).replace('\n', '; ')
             end = {'event': 'finished', 'round': n, 'executed': True, 'recorded': recorded,
+                   'fresh_at_finish': fresh, 'freshness_reason': freshness_reason,
                    'guards': checks,
                    'inventory_sha256': digest(artifact.stdout) if phase == 1 else start['inventory_sha256'],
                    'outputs': ledger.hashes(d, ['ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt'])}
             ledger.append(root, end)
+            finished = True
             for check in checks:
                 if not check['ok']:
                     print(check['reason'], file=sys.stderr)
-            print(f'review: {"RECORDED" if recorded else "FAILED"} artifact {d / "ARTIFACT.md"}; '
+            print(f'review: {"RECORDED" if recorded else "FAILED"} {"FRESH" if fresh else "STALE"} artifact {d / "ARTIFACT.md"}; '
                   'maintainer must assess the evidence; no automatic merge approval')
+            if not fresh:
+                print(freshness_reason, file=sys.stderr)
             if n == MAX_ROUNDS:
                 ledger.handoff(root, repo, head)
-            return review_exit(recorded, n)
-        except (Rejected, OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
-            reason = str(e).replace('\n', '; ')
+            return review_exit(recorded and fresh, n)
+        except (Rejected, ledger.MissingGuard, OSError, ValueError, KeyError,
+                subprocess.SubprocessError, KeyboardInterrupt) as e:
+            reason = (f'executor timed out after {timeout:g}s' if isinstance(e, subprocess.TimeoutExpired)
+                      else str(e).replace('\n', '; ') or 'review interrupted')
+            if finished:
+                print(reason, file=sys.stderr)
+                return FAILED
+            if child is not None:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait()
+                (d / 'executor-exit.txt').write_text(str(child.returncode))
             if not started:
                 start['inputs'] = ledger.hashes(d, inputs)
                 ledger.append(root, start)
@@ -247,6 +334,8 @@ def main():
                 ledger.handoff(root, repo, head)
             return FAILED
         finally:
+            for sig, handler in old_handlers.items():
+                signal.signal(sig, handler)
             if clone:
                 shutil.rmtree(clone)
 

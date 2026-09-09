@@ -34,7 +34,7 @@ def check(repo, trusted):
         # every commit -- benchmarks included -- to test a directory that is 276KB of it. The
         # snapshot is still one Git tree, so what the tests read is still exactly what is staged.
         subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', '-o', str(archive),
-                        tree, 'skills', 'dogfood'], check=True)
+                        tree, 'skills/sol-simplify-review'], check=True)
         staged = tmp / 'staged'
         staged.mkdir()
         with tarfile.open(archive) as tar:

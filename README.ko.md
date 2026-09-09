@@ -31,7 +31,8 @@
 
 코딩 에이전트는 코드만 과설계하지 않는다. **자기 작업 주위에 관료제를 짓는다.** 게이트, 레지스트리, 추적성 매트릭스, 검증기를 검증하는 검증기. 그러고는 프로젝트 수명을 그걸 유지하는 데 쓴다. 결국 기계가 제품보다 커지면 작업을 통과시키지 않기 시작한다.
 
-sol-simplify는 그걸 멈추는 마크다운 한 장이다. 플러그인도, 훅도, 설치 스크립트도 없다.
+핵심 `sol-simplify` 스킬은 마크다운 한 장이며 플러그인이나 훅이 필수는 아니다.
+아래에서 설명하는 선택형 리뷰 스킬에는 별도로 실행하는 로컬 실행기가 포함된다.
 
 ## 설치
 
@@ -101,6 +102,44 @@ curl -sL https://raw.githubusercontent.com/MongLong0214/sol-simplify/main/skills
 
 기계 대 제품 비율을 재고 아무것도 출하하지 않은 유지보수 커밋을 찾아 삭제 우선순위를 매긴다. 보고만 하고 파일은 바꾸지 않는다.
 
+## 같은 코드 리뷰를 반복하지 않기
+
+선택형 **sol-simplify-review** 스킬은 구체적인 발견 사항을 보존하고, 그 근거로 수정과 회귀를
+검토한다. 실행기는 1인용 trusted-local 도구이며 머지 게이트나 호스팅 서비스가 아니다.
+리뷰할 checkout 밖에 둔 이 저장소의 설치본에서 실행한다:
+
+```sh
+skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto codex
+skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" status codex
+```
+
+- 입력이 같으면 마지막 시도를 재사용한다. 코드·대상 커밋·제공한 맥락·lesson·응답·모델 설정·
+  프로토콜이 바뀌면 다시 검토할 수 있다. 같은 입력으로 실패한 시도는 자동 재실행하지 않는다.
+- 후속 리뷰는 원래 발견 사항과 최신 리뷰를 이어받는다. 이력이 다시 쓰이거나 기준점이 바뀌면
+  새 범위를 검토하되, **동일 PR의 총 3회 예산** 안에서 진행한다. 횟수를 초기화하지 않는다.
+- `status`는 모델 실행이나 Git fetch 없이 상태를 조회한다. 종료 직전 대상 커밋을 다시 확인하고,
+  바뀌었거나 확인할 수 없으면 결과를 보존하되 오래된 결과로 표시한다.
+- 실행 제한 시간은 기본 1,800초이며 `REVIEW_TIMEOUT`으로 바꾼다. timeout·SIGINT·SIGTERM은
+  실행기의 프로세스 그룹을 종료하고 실패 기록을 남긴다.
+
+종료 코드 **10**은 근거 기록, **11**은 예산 소진에 따른 인계, **5**는 실패하거나 오래된 근거를
+뜻한다. 어느 것도 승인이 아니다. 3회는 자동 반복 상한이지 정확한 리뷰·결함 해소·안전한 머지의
+보장이 아니다. 공급자 내부 모델 리비전과 노출되지 않는 실행기 기본 설정은 확인 불가로 남긴다.
+
+실행기는 Bash·Git·Python 3.9+가 필요하다. PR 조회에는 인증된 `gh`, 실제 리뷰에는 Codex 또는
+Claude Code가 필요하다. 전체 오프라인 테스트와 선택형 Node 회귀 재생은 Node 22+를 사용한다.
+
+```sh
+bash skills/sol-simplify-review/scripts/selftest.sh
+python3 dogfood/run.py --status  # 등록된 소비자 조회, 모델 호출 없음
+python3 dogfood/run.py           # 한 번 조회·실행하고 종료, daemon 아님
+```
+
+`dogfood/consumers.json`의 메인테이너 로컬 경로를 수정하거나 `REVIEW_CONSUMERS_CONFIG`로 별도 파일을
+선택한다. 플러그인 설치만으로 주기 실행이 시작되지는 않는다. 선택형 macOS poller·구현자 응답·
+측정된 회귀 단서는 [소비자 가이드](dogfood/README.md)와 [실행 가이드](skills/sol-simplify-review/README.md)에
+설명돼 있다. 소비자 리뷰는 push·댓글 작성·머지를 하지 않는다.
+
 ## 왜 만들었는가
 
 <p align="center">
@@ -162,7 +201,3 @@ docs: say where acceptance is decided, because the rule as written refuses all w
 ## License
 
 MIT
-
-리뷰 지원·근거 보존: [실행 가이드](skills/sol-simplify-review/README.md).
-자동 리뷰는 PR별 최대 3시도에서 끝내고 남은 판단을 인계합니다. 안전한 머지까지의 수렴은 보장하지 않습니다.
-회귀 테스트 재생으로 측정한 단서를 다음 리뷰에 공급합니다. 근거는 [소비자 재검토](dogfood/REASSESSMENT.md)에 있습니다.

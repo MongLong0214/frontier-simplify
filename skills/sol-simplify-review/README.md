@@ -15,6 +15,7 @@ scripts/review-round.sh 1 "$REPO" "$HEAD" "$PR_ID" "$BASE" codex
 REVIEW_RESPONSE=/host/response.md \
   scripts/review-round.sh 2 "$REPO" "$REMEDIATION_HEAD" "$PR_ID" "$BASE" claude
 scripts/review-round.sh report "$REPO" HEAD "$PR_ID"
+scripts/review-round.sh status "$REPO" "$HEAD" "$PR_ID" "$BASE" codex
 scripts/review-round.sh path "$REPO" HEAD "$PR_ID"
 scripts/review-round.sh hunks "$REPO" "$REMEDIATION_HEAD" "$PR_ID"
 ```
@@ -29,7 +30,11 @@ Legacy attempts count; a PR already over the limit immediately hands off without
 The third attempt is the last automatic review. Later calls report the preserved artifacts and
 remaining human work without running a model or appending another refusal. Keep the PR ID and
 artifact root stable; this is a cooperative host limit, not protection against an operator deleting
-history or assigning an alias. It bounds attempts, not wall time, repair count or safe merge arrival.
+history or assigning an alias. It bounds attempts, not repair count or safe merge arrival.
+Each executor has a 1,800-second timeout; `REVIEW_TIMEOUT` accepts any positive finite number of
+seconds. Timeout and SIGINT/SIGTERM stop its process group, preserve failure output and release
+the lock. A process that could not start is recorded as not executed. SIGKILL or a host crash can
+leave an interrupted attempt; status detects active runs from the OS lock, not an old PID file.
 
 The implementer response is optional prose. When absent, the reviewer works from the complete diff
 and explains any uncertainty. Git-generated hunk IDs are navigation aids, not required mappings.
@@ -42,7 +47,7 @@ original-head..remediation-head diff. Reviewers must carry unresolved findings a
 | `11` from a review or cached review | Automatic review budget exhausted; human handoff. The third intact review and all later calls return this. It can contain BLOCKERs, gaps or an unreviewed requested head. |
 | `5` from a review | Execution, target or evidence checks failed. |
 | Other nonzero | Invocation or environment error. |
-| `0` from `report`, `path` or `hunks` | The read-only utility completed. This is never a PR approval. |
+| `0` from `status`, `report`, `path` or `hunks` | The read-only utility completed. This is never a PR approval. |
 
 **Review execution never returns 0, including a PASS recommendation and every stub run.** A shell
 caller that previously used exit 0 as a merge gate must stop doing so. Do not reinterpret exit 10 as
@@ -116,12 +121,30 @@ through the prompts; its source evidence stays with the consumer, outside the po
 
 ```sh
 scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto
+scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" status
 ```
 
 The adapter resolves exact PR commits with `gh`, fetches them into a host clone and invokes the
-runner. Auto mode reviews each head once and routes changed heads to follow-up when an original
-review is available. Explicit `1` or `2` can retry within the three-attempt budget. Cached results
-have the same nonapproval status and are bound to both base and head.
+runner. Auto mode reuses the latest attempt only when head, base, target tip, protocol, executor,
+configured model, timeout, supplied prompt inputs, lesson bytes and response bytes (including absence)
+match. Changed inputs can use another remaining attempt. Generated leads from the PR's own
+reviews do not trigger a repeat. An unchanged failed/interrupted attempt returns 5 without an
+automatic retry; explicit `1` or `2` can retry within the same budget. Old receipts without these
+input identities remain readable but are not cache hits. Provider-side model revisions and
+executor-default configuration are not discoverable here; the revision is recorded as unknown.
+When a changed base or rewritten history cannot continue the preserved original review, auto mode
+starts a fresh phase 1 within the same remaining PR budget. Explicit phase 2 still rejects that
+scope change; it never silently treats unrelated history as a repair.
+
+`status` prints RUNNING, NOT_REVIEWED, RECORDED, FAILED or INTERRUPTED, freshness, attempts and
+the artifact path. It launches no reviewer, fetches no Git objects and creates no history. PR status
+reads current metadata through `gh`; local status checks the supplied refs and caller inputs.
+Use the same input settings as the review when asking whether its result is fresh.
+
+At completion, the runner rechecks mutable local refs; the PR adapter also rereads both PR SHAs.
+A moved target or unavailable final metadata returns 5 and labels the preserved artifact STALE.
+The artifact still describes its original exact commits. Cached returns recheck PR metadata too.
+Freshness is an observation at that check, not a promise that the remote cannot change afterward.
 It does not decide whether the PR has merged or whether the review caused a fix.
 
 Consumer configuration lives outside the portable skill. `REVIEW_CONSUMERS_CONFIG` names a JSON

@@ -1,6 +1,6 @@
 {
   "name": "sol-simplify",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Stops an agent from manufacturing process around its own work: invented gates, approval flows, verification machinery, and governance documents nobody asked for.",
   "author": {
     "name": "MongLong0214",
@@ -20,6 +20,10 @@
   "interface": {
     "displayName": "sol-simplify",
     "shortDescription": "Cuts the bureaucracy agents build around their own work",
+    "longDescription": "Keep useful product work and remove invented process. Optional review assistance preserves findings and bounds repeated automatic reviews without authorizing merges.",
+    "defaultPrompt": [
+      "Review this change and preserve actionable findings."
+    ],
     "developerName": "MongLong0214",
     "category": "Productivity",
     "capabilities": [

@@ -31,7 +31,8 @@
 
 Coding agents do not only over-engineer code. They build **bureaucracy around their own work** — gates, registries, traceability matrices, validators for the validators — and then spend the project maintaining it. Eventually the machinery outgrows the product and starts refusing to let work through.
 
-sol-simplify is one markdown file that stops it. No plugin, no hooks, no install script.
+The core `sol-simplify` skill is one Markdown file; no plugin or hook is required.
+The optional review skill adds an explicitly invoked local runner, described below.
 
 ## Install
 
@@ -102,6 +103,45 @@ curl -sL https://raw.githubusercontent.com/MongLong0214/sol-simplify/main/skills
 
 It measures the machinery-to-product ratio, finds maintenance commits that shipped nothing, ranks what to delete, and reports only — it changes no files.
 
+## Stop repeating the same code review
+
+The optional **sol-simplify-review** skill preserves concrete findings and checks repairs against
+them. Its runner is for one maintainer on a trusted local host, not a merge gate or hosted service.
+Use a separate installation of this repository, outside the checkout being reviewed:
+
+```sh
+skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" auto codex
+skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" status codex
+```
+
+- Identical inputs reuse the latest attempt. Code, target, supplied context, lessons, response,
+  model settings or protocol changes invalidate that reuse. Unchanged failures do not auto-retry.
+- Repairs use the original findings and latest review. Rewritten history or a changed base gets
+  a fresh scope review within the **same three-attempt PR budget**, never a reset.
+- `status` reads state without launching a model or fetching Git objects. Completion rechecks
+  the requested commits; a moved or unavailable target leaves a preserved but stale result.
+- Executors time out after 1,800 seconds by default (`REVIEW_TIMEOUT` changes it). Timeout and
+  SIGINT/SIGTERM stop their process group and preserve the failed attempt.
+
+Exit **10** means evidence recorded, **11** means the budget ended in a human handoff, and **5**
+means failed or stale evidence. None means approval. Three attempts bound automatic repetition;
+they do not guarantee correct review, closed defects or a safe merge. Provider-side model revisions
+and unexposed executor defaults cannot be fingerprinted and remain unknown.
+
+The runner needs Bash, Git and Python 3.9+; PR discovery also needs authenticated `gh`, and live
+reviews need Codex or Claude Code. Full offline tests and optional Node witness replay need Node 22+.
+
+```sh
+bash skills/sol-simplify-review/scripts/selftest.sh
+python3 dogfood/run.py --status  # inspect configured consumers; no model calls
+python3 dogfood/run.py           # one discovery/review pass, not a daemon
+```
+
+Edit the maintainer-local paths in `dogfood/consumers.json`, or set `REVIEW_CONSUMERS_CONFIG` to
+your own file. Plugin installation starts no scheduled work. The optional macOS poller, separate
+responses, and measured regression leads are covered in the [consumer guide](dogfood/README.md)
+and [runner guide](skills/sol-simplify-review/README.md). Consumer reviews never push, post or merge.
+
 ## Why this exists
 
 <p align="center">
@@ -171,8 +211,3 @@ invoked runner, regression replay and a local test hook; plugin installation alo
 ## License
 
 MIT
-
-Review assistance and evidence preservation: [runner guide](skills/sol-simplify-review/README.md).
-Automatic review stops after at most three attempts per PR and hands off unresolved work.
-It does not promise safe merge convergence. Regression replay supplies measured leads to later reviews; see the
-[consumer reassessment](dogfood/REASSESSMENT.md).

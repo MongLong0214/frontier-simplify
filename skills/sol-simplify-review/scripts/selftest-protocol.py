@@ -2,12 +2,18 @@
 """Offline execution, evidence handoff, failure witnesses and consumer adapter tests."""
 import json
 import io
+import importlib.util
 import os
+import plistlib
+import runpy
 import shutil
+import signal
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
+from unittest.mock import patch
 
 SCRIPTS = Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(SCRIPTS / 'lib'))
@@ -16,7 +22,7 @@ import protocol
 import catalog
 import replay
 import witness
-from protocol import Rejected, digest, hunks
+from protocol import Rejected, digest, hunks, require
 from portability import check as portability
 
 passed = failed = 0
@@ -368,12 +374,191 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     metadata.write_text(json.dumps({'number': 43, 'headRefOid': h2, 'baseRefOid': h1, 'url': 'fixture'}))
     changed_target = cmd(SCRIPTS / 'review-pr.sh', repo, '43', 'auto', 'stub', env=prenv)
     check('consumer-cache-cannot-hide-base-change', True,
-          lambda: changed_target.returncode == 5 and '[scope-change]' in changed_target.stderr)
+          lambda: changed_target.returncode == 10 and 'round 2, phase 1' in changed_target.stderr)
+    metadata.write_text(json.dumps({'number': 43, 'headRefOid': special, 'baseRefOid': h1}))
+    changed_target_followup = cmd(SCRIPTS / 'review-pr.sh', repo, '43', 'auto', 'stub', env=prenv)
+    check('changed-scope-keeps-budget-and-new-original', True,
+          lambda: changed_target_followup.returncode == 11
+          and 'round 3, phase 2' in changed_target_followup.stderr)
     missing_lessons = cmd(SCRIPTS / 'review-pr.sh', repo, '43', 'auto', 'stub',
                           env=dict(prenv, REVIEW_LESSONS=str(t / 'missing-lessons')))
     check('consumer-missing-lesson-directory-is-not-empty-evidence', True,
           lambda: missing_lessons.returncode != 10 and '[consumer]' in missing_lessons.stderr
           and 'REVIEW_LESSONS directory is missing' in missing_lessons.stderr)
+    # Same code is reusable only under the same caller inputs. Each case gets its own
+    # stable PR so the existing budget cannot hide a bad cache hit.
+    def consumer(number, environment=prenv, phase='auto', executor='stub'):
+        metadata.write_text(json.dumps({'number': number, 'headRefOid': h2,
+                                       'baseRefOid': base, 'url': 'fixture'}))
+        return cmd(SCRIPTS / 'review-pr.sh', repo, str(number), phase, executor, env=environment)
+    consumer(64)
+    metadata.write_text(json.dumps({'number': 64, 'headRefOid': h1, 'baseRefOid': base}))
+    rewritten = cmd(SCRIPTS / 'review-pr.sh', repo, '64', 'auto', 'stub', env=prenv)
+    check('auto-reviews-rewritten-history-without-resetting-budget', True,
+          lambda: rewritten.returncode == 10 and 'round 2, phase 1' in rewritten.stderr)
+    events(t / 'events', 'partial', complete=False)
+    consumer(65, dict(prenv, REVIEW_TIMEOUT='1'))
+    events(t / 'events', original)
+    repaired_timeout = consumer(65, dict(prenv, REVIEW_TIMEOUT='60'))
+    check('auto-retries-corrected-timeout-setting', True,
+          lambda: repaired_timeout.returncode == 10 and 'round 2, phase 1' in repaired_timeout.stderr)
+    invalid_env = dict(prenv, REVIEW_TIMEOUT='invalid')
+    consumer(66, invalid_env)
+    repeated_invalid = consumer(66, invalid_env)
+    check('unchanged-preflight-failure-does-not-consume-another-attempt', True,
+          lambda: repeated_invalid.returncode == 5
+          and len(ledger.read(Path(cmd(SCRIPTS / 'review-round.sh', 'path', mirror, h2, '66',
+                                     env=prenv).stdout.strip()))) == 2)
+    for number, key in enumerate(['REVIEW_REQUIREMENTS', 'REVIEW_ROUTED', 'REVIEW_CATALOG',
+                                  'REVIEW_SUITE_STATUS', 'REVIEW_TOOL_NOTES', 'REVIEW_CODEX_MODEL'], 50):
+        consumer(number)
+        changed = consumer(number, dict(prenv, **{key: 'changed caller input'}))
+        check('cache-invalidates-' + key.lower(), True,
+              lambda: 'round 2, phase 2' in changed.stderr and changed.returncode == 10)
+    consumer(56)
+    (lessons / 'measured/LEAD.md').write_text('A changed host-selected question.\n')
+    changed = consumer(56)
+    check('cache-invalidates-lesson-bytes', True, lambda: 'round 2, phase 2' in changed.stderr)
+    response = t / 'cache-response.md'
+    response.write_text('An implementer response.')
+    response_env = dict(prenv, REVIEW_RESPONSE=str(response))
+    consumer(57)
+    consumer(57, response_env, phase='2')
+    removed = consumer(57)
+    check('cache-invalidates-removed-response', True,
+          lambda: 'round 3, phase 2' in removed.stderr and removed.returncode == 11)
+    # A failed attempt is visible, not a fresh result or an unbounded automatic retry.
+    events(t / 'events', 'partial', complete=False)
+    consumer(58)
+    failed_cache = consumer(58)
+    check('unchanged-failed-auto-does-not-retry', True,
+          lambda: failed_cache.returncode == 5 and 'round 2, phase' not in failed_cache.stderr)
+    events(t / 'events', original)
+    repaired_inputs = consumer(58, dict(prenv, REVIEW_TOOL_NOTES='transport repaired'))
+    check('changed-inputs-can-retry-failed-execution', True,
+          lambda: repaired_inputs.returncode == 10 and 'round 2, phase 1' in repaired_inputs.stderr)
+    unseen_artifacts = t / 'status-only'
+    status = consumer(59, dict(prenv, REVIEW_ARTIFACTS=str(unseen_artifacts)), phase='status')
+    check('status-is-readonly-without-history', True,
+          lambda: status.returncode == 0 and 'NOT_REVIEWED' in status.stdout and not unseen_artifacts.exists())
+    bad_executor = cmd(SCRIPTS / 'review-round.sh', '1', repo, h1, 'invalid-executor', base,
+                       'not-an-executor', env=env)
+    check('invalid-executor-was-not-executed', True,
+          lambda: bad_executor.returncode == 5
+          and ledger.read(root_for('invalid-executor'))[-1]['executed'] is False)
+    fresh_status = consumer(58, dict(prenv, REVIEW_TOOL_NOTES='transport repaired'), phase='status')
+    stale_status = consumer(58, phase='status')
+    check('status-distinguishes-fresh-and-stale-inputs', True,
+          lambda: 'RECORDED FRESH' in fresh_status.stdout and 'RECORDED STALE' in stale_status.stdout)
+    # The target tip can move without changing merge-base or head.
+    consumer(60)
+    other_target = git(repo, 'commit-tree', base + '^{tree}', '-p', base, '-m', 'divergent target')
+    metadata.write_text(json.dumps({'number': 60, 'headRefOid': h2, 'baseRefOid': other_target}))
+    target_move = cmd(SCRIPTS / 'review-pr.sh', repo, '60', 'auto', 'stub', env=prenv)
+    check('cache-invalidates-target-tip-with-same-merge-base', True,
+          lambda: target_move.returncode == 10 and 'round 2, phase 2' in target_move.stderr)
+    changed_install = t / 'changed-install'
+    shutil.copytree(SCRIPTS.parent, changed_install, ignore=shutil.ignore_patterns('__pycache__'))
+    consumer(61)
+    with (changed_install / 'scripts/lib/events.py').open('a') as f:
+        f.write('\n# host-selected protocol update\n')
+    protocol_move = cmd(changed_install / 'scripts/review-pr.sh', repo, '61', 'auto', 'stub', env=prenv)
+    check('cache-invalidates-protocol-install', True,
+          lambda: protocol_move.returncode == 10 and 'round 2, phase 2' in protocol_move.stderr)
+    # Real child processes exercise cancellation, timeout, lock visibility and final HEAD
+    # freshness. This fake CLI emits fixture events; it never invokes a model.
+    fake_codex = fakebin / 'codex'
+    fake_codex.write_text('#!' + sys.executable + '\n' + '''
+import json, os, subprocess, sys, time
+from pathlib import Path
+mode = os.environ.get('TEST_EXECUTOR_MODE', '')
+if mode == 'wait':
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    Path(os.environ['TEST_READY']).write_text(json.dumps([os.getpid(), child.pid, os.getcwd()]))
+    time.sleep(60)
+elif mode == 'head':
+    subprocess.run(['git', '-C', os.environ['TEST_REPO'], 'update-ref',
+                    'refs/heads/moving', os.environ['TEST_NEXT_HEAD']], check=True)
+elif mode in ('pr', 'gh-error'):
+    path = Path(os.environ['TEST_PR_METADATA'])
+    data = json.loads(path.read_text())
+    data['headRefOid'] = os.environ['TEST_NEXT_HEAD']
+    path.write_text('invalid metadata' if mode == 'gh-error' else json.dumps(data))
+sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
+''')
+    fake_codex.chmod(0o755)
+    liveenv = dict(prenv, TEST_EVENTS=str(t / 'events'), TEST_REPO=str(repo), TEST_NEXT_HEAD=special)
+    events(t / 'events', original)
+    git(repo, 'branch', 'moving', h1)
+    moved = cmd(SCRIPTS / 'review-round.sh', '1', repo, 'moving', 'moving-head', base, 'codex',
+                env=dict(liveenv, TEST_EXECUTOR_MODE='head'))
+    moved_rows = ledger.read(root_for('moving-head'))
+    check('completion-rechecks-mutable-local-head', True,
+          lambda: moved.returncode == 5 and 'STALE' in moved.stdout
+          and moved_rows[-1]['recorded'] and not moved_rows[-1]['fresh_at_finish'])
+    for number, mode in [(62, 'pr'), (63, 'gh-error')]:
+        result = consumer(number, dict(liveenv, TEST_EXECUTOR_MODE=mode), executor='codex')
+        check('completion-rechecks-remote-' + mode, True,
+              lambda: result.returncode == 5 and 'RECORDED STALE' in result.stdout)
+    ready = t / 'executor-ready.json'
+    def wait_ready(process):
+        until = time.monotonic() + 20
+        while time.monotonic() < until and process.poll() is None and not ready.exists():
+            time.sleep(0.02)
+        require(ready.exists(), 'test-ready', 'fake executor did not start')
+        return json.loads(ready.read_text())
+    def stopped(pid):
+        state = cmd('ps', '-o', 'stat=', '-p', str(pid)).stdout.strip()
+        return not state or state.startswith('Z')
+    for label, timeout, sig in [('timeout', '1', None), ('sigterm', '60', signal.SIGTERM),
+                                 ('sigint', '60', signal.SIGINT)]:
+        ready.unlink(missing_ok=True)
+        runenv = dict(liveenv, TEST_EXECUTOR_MODE='wait', TEST_READY=str(ready), REVIEW_TIMEOUT=timeout)
+        proc = subprocess.Popen([str(SCRIPTS / 'review-round.sh'), '1', str(repo), h1,
+                                 label, base, 'codex'], env=runenv,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            parent_pid, child_pid, checkout = wait_ready(proc)
+            if sig:
+                status = cmd(SCRIPTS / 'review-round.sh', 'status', repo, h1, label, base, 'codex', env=runenv)
+                duplicate = cmd(SCRIPTS / 'review-round.sh', 'auto', repo, h1, label, base, 'codex', env=runenv)
+                check(label + '-running-status-and-no-concurrent-execution', True,
+                      lambda: status.returncode == 0 and 'RUNNING' in status.stdout
+                      and '[concurrent-round]' in duplicate.stderr)
+                proc.send_signal(sig)
+            stdout, stderr = proc.communicate(timeout=20)
+            rows = ledger.read(root_for(label))
+            check(label + '-records-one-failure-and-cleans-children', True,
+                  lambda: proc.returncode == 5 and len(rows) == 2 and rows[-1]['executed']
+                  and not rows[-1]['recorded'] and stopped(parent_pid) and stopped(child_pid)
+                  and not Path(checkout).exists())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+    # A failed spawn and a missing harness check both close the attempt exactly once.
+    spec = importlib.util.spec_from_file_location('test_runner', SCRIPTS / 'lib/run-review.py')
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    real_popen = subprocess.Popen
+    def missing_cli(command, *args, **kwargs):
+        if command[0] == 'codex':
+            raise FileNotFoundError('test: executor binary missing')
+        return real_popen(command, *args, **kwargs)
+    with patch.dict(os.environ, env, clear=True), patch.object(subprocess, 'Popen', missing_cli):
+        result = runner.main(['1', str(repo), h1, 'missing-cli', base, 'codex'])
+    check('spawn-failure-is-not-executed', True,
+          lambda: result == 5 and not ledger.read(root_for('missing-cli'))[-1]['executed'])
+    real_guard = ledger.shell_guard
+    def missing_check(name, *args):
+        if name == 'guard_turn_completed':
+            raise ledger.MissingGuard('test: completion check missing')
+        return real_guard(name, *args)
+    with patch.dict(os.environ, env, clear=True), patch.object(ledger, 'shell_guard', missing_check):
+        result = runner.main(['1', str(repo), h1, 'missing-check', base, 'stub'])
+    rows = ledger.read(root_for('missing-check'))
+    check('harness-exception-closes-attempt-once', True,
+          lambda: result == 5 and len(rows) == 2 and rows[-1]['executed'] and not rows[-1]['recorded'])
     (t / 'events').write_text('{"type":"result","subtype":"error_during_execution","is_error":true}\n')
     check('executor-error-result-rejected', True,
           lambda: cmd(sys.executable, SCRIPTS / 'lib/events.py', 'completed', t / 'events').returncode != 0)
@@ -476,6 +661,36 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
                   lambda child=child, expected=expected: cmd(sys.executable, poller / 'dogfood/run.py',
                       env=dict(poll_env, TEST_CHILD_STATUS=str(child))).returncode == expected)
         check('poller-delivers-consumer-lessons', True, lambda: (poller / 'received').read_text() == str(lessons))
+        poll_runner.write_text('#!/bin/sh\nprintf "%s" "$3" > "$TEST_LESSON_PATH"\nexit 0\n')
+        polled_status = cmd(sys.executable, poller / 'dogfood/run.py', '--status', env=poll_env)
+        check('poller-status-never-runs-auto', True,
+              lambda: polled_status.returncode == 0 and (poller / 'received').read_text() == 'status')
+        metadata.write_text('[]')
+        idle = cmd(sys.executable, poller / 'dogfood/run.py', env=poll_env)
+        check('poller-empty-discovery-is-explicit', True,
+              lambda: idle.returncode == 0 and '0 open PRs' in idle.stdout)
+        # Exercise the installer without touching launchd or this user's LaunchAgents.
+        installer = poller_source.with_name('install.py')
+        launch_home = t / 'launch-home'
+        install_env = dict(env, REVIEW_CONSUMERS_CONFIG=str(poll_config),
+                           REVIEW_EXECUTOR='claude', REVIEW_CODEX_MODEL='selected-model', REVIEW_TIMEOUT='90')
+        with patch.dict(os.environ, install_env, clear=True), patch.object(Path, 'home', return_value=launch_home), \
+                patch.object(sys, 'argv', [str(installer), '--interval', '60', '--artifacts', 'relative-artifacts']), \
+                patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(t)
+                runpy.run_path(str(installer), run_name='__main__')
+            finally:
+                os.chdir(previous_cwd)
+        launch = plistlib.loads((launch_home / 'Library/LaunchAgents/dev.sol-simplify.review-dogfood.plist').read_bytes())
+        check('installer-preserves-selected-config-and-executor', True,
+              lambda: all(launch['EnvironmentVariables'].get(k) == install_env[k] for k in
+                          ('REVIEW_EXECUTOR', 'REVIEW_CODEX_MODEL', 'REVIEW_TIMEOUT'))
+              and Path(launch['EnvironmentVariables']['REVIEW_CONSUMERS_CONFIG']) == poll_config.resolve())
+        check('installer-log-paths-are-absolute', True,
+              lambda: Path(launch['StandardOutPath']) == (t / 'relative-artifacts/dogfood.log').resolve()
+              and Path(launch['StandardErrorPath']) == (t / 'relative-artifacts/dogfood.err').resolve())
     # Fingerprint changes cover the code that judges evidence as well as prompt text.
     version = t / 'version'
     shutil.copytree(SCRIPTS, version / 'scripts', ignore=shutil.ignore_patterns('__pycache__'))

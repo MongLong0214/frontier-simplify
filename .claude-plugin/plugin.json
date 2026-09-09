@@ -1,6 +1,6 @@
 {
   "name": "sol-simplify",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Stops coding agents from building bureaucracy around their own work: invented gates, approval flows, verification machinery, governance documents nobody asked for.",
   "author": {
     "name": "MongLong0214",

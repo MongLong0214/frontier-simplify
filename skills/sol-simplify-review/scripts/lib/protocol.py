@@ -1,6 +1,7 @@
 """Git identities and byte integrity; review prose is not an authorization language."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -35,6 +36,20 @@ def protocol_sha256(scripts):
                        if p.is_file() and '__pycache__' not in p.parts):
         parts.append(str(path.relative_to(scripts)).encode() + b'\0' + path.read_bytes())
     return digest(b'\0'.join(parts))
+
+
+def review_context(scripts, executor, response):
+    """Caller-selected inputs; generated PR history must not invalidate its own review."""
+    values = {key: os.environ.get(key, default) for key, default in {
+        'REVIEW_REQUIREMENTS': 'none', 'REVIEW_ROUTED': 'none', 'REVIEW_CATALOG': 'none',
+        'REVIEW_SUITE_STATUS': 'UNKNOWN', 'REVIEW_TOOL_NOTES': 'none',
+        'REVIEW_CODEX_MODEL': '', 'REVIEW_TARGET_OID': '', 'REVIEW_TIMEOUT': '1800',
+    }.items()}
+    return dict(inputs_sha256=digest(json.dumps(values, sort_keys=True).encode()),
+                response_sha256=digest(response) if response is not None else None,
+                protocol_sha256=protocol_sha256(scripts), executor=executor,
+                model=os.environ.get('REVIEW_CODEX_MODEL') or 'executor default',
+                model_revision='unknown')
 
 
 

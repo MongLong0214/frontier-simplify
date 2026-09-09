@@ -2,21 +2,27 @@
 """Read-only PR discovery; fetch and review in the host's clone, never in the consumer."""
 import argparse
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
-from protocol import digest, git, require, Rejected, review_exit, HANDOFF, MAX_ROUNDS
+from protocol import digest, git, require, Rejected, review_context
+import catalog
+import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
+spec = importlib.util.spec_from_file_location('runner', SCRIPTS / 'lib/run-review.py')
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('repository', nargs='?', default=os.environ.get('REVIEW_CONSUMER_REPO'))
     p.add_argument('pr', type=int)
-    p.add_argument('phase', choices=['1', '2', 'auto', 'report', 'hunks'], nargs='?', default='auto')
+    p.add_argument('phase', choices=['1', '2', 'auto', 'status', 'report', 'hunks'], nargs='?', default='auto')
     p.add_argument('executor', nargs='?', default=os.environ.get('REVIEW_EXECUTOR', 'codex'))
     a = p.parse_args()
     require(a.repository and a.pr > 0, 'consumer', 'repository and positive PR number are required')
@@ -26,17 +32,43 @@ def main():
     require(not root.is_relative_to(repo), 'host-location', 'artifact root must be outside consumer checkout')
     # Stable across consumer worktrees; the trusted host supplies the remote and PR identity.
     host = root / 'consumers' / digest(origin.encode())[:16]
-    host.mkdir(parents=True, exist_ok=True)
     mirror = host / 'repository'
+    def metadata_for_pr():
+        data = json.loads(subprocess.check_output(['gh', 'pr', 'view', str(a.pr), '--json',
+                         'number,headRefOid,baseRefOid,url'], cwd=repo, timeout=30))
+        require(data['number'] == a.pr, 'consumer', 'PR metadata identity mismatch')
+        return data
+    metadata = metadata_for_pr()
+    head, target = metadata['headRefOid'], metadata['baseRefOid']
+    os.environ['REVIEW_TARGET_OID'] = target
+    os.environ['REVIEW_REPOSITORY_NAME'] = origin
+    response = Path(os.environ.get('REVIEW_RESPONSE', str(host / f'pr-{a.pr}-response.md')))
+    if response.exists():
+        os.environ['REVIEW_RESPONSE'] = str(response)
+    leads = [os.environ.get('REVIEW_CATALOG', '')]
+    lessons = os.environ.get('REVIEW_LESSONS')
+    if lessons:
+        directory = Path(lessons)
+        require(directory.is_dir(), 'consumer', 'REVIEW_LESSONS directory is missing')
+        leads += [p.read_text() for p in sorted(directory.glob('*/LEAD.md'))]
+    os.environ['REVIEW_CATALOG'] = '\n\n'.join(s for s in leads if s.strip() and s.strip() != 'none') or 'none'
+    if a.phase == 'status':
+        if not mirror.exists():
+            print(f'NOT_REVIEWED: requested head {head}; no local review history')
+        else:
+            response_bytes = response.read_bytes() if os.environ.get('REVIEW_RESPONSE') else None
+            ledger.status(runner.root_for(mirror, str(a.pr)), mirror, head,
+                          context=review_context(SCRIPTS, a.executor, response_bytes))
+        return 0
+    host.mkdir(parents=True, exist_ok=True)
     with (host / '.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Rejected('review-pr: repository fetch already running; try status shortly')
         if not mirror.exists():
             subprocess.run(['git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', str(repo), str(mirror)], check=True)
             subprocess.run(['git', '-C', str(mirror), 'remote', 'set-url', 'origin', origin], check=True)
-        metadata = json.loads(subprocess.check_output(['gh', 'pr', 'view', str(a.pr), '--json',
-                                                      'number,headRefOid,baseRefOid,url'], cwd=repo))
-        require(metadata['number'] == a.pr, 'consumer', 'PR metadata identity mismatch')
-        head, target = metadata['headRefOid'], metadata['baseRefOid']
         # Exact SHAs, not mutable branch names. No push, comments, or merge mutation.
         subprocess.run(['git', '-C', str(mirror), 'fetch', '--quiet', 'origin', head, target], check=True)
         base = git(mirror, 'merge-base', target, head).decode().strip()
@@ -47,58 +79,24 @@ def main():
     # not the reviewed head -- measured: a round spent its opening moves discovering that and
     # building its own checkout, and a less careful reviewer would have reviewed the base.
     # The reviewer's own cwd is the correct disposable checkout; the prompt gets the identity.
-    os.environ['REVIEW_REPOSITORY_NAME'] = origin
     # History supplies attributed leads, never required IDs or self-promoted obligations.
     if a.phase in {'1', '2', 'auto'}:
-        ledger_root = subprocess.run([str(SCRIPTS / 'review-round.sh'), 'path', str(mirror),
-                                      head, str(a.pr)], capture_output=True, text=True)
-        require(ledger_root.returncode == 0, 'consumer', ledger_root.stderr.strip())
-        import ledger
-        ledger.audit(Path(ledger_root.stdout.strip()), mirror)
-        harvested = subprocess.run([sys.executable, str(SCRIPTS / 'lib/catalog.py'),
-                                    ledger_root.stdout.strip()], capture_output=True, text=True)
-        require(harvested.returncode == 0, 'consumer', harvested.stderr.strip())
-        leads = [os.environ.get('REVIEW_CATALOG', ''), harvested.stdout]
-        lessons = os.environ.get('REVIEW_LESSONS')
-        if lessons:
-            directory = Path(lessons)
-            require(directory.is_dir(), 'consumer', 'REVIEW_LESSONS directory is missing')
-            leads += [p.read_text() for p in sorted(directory.glob('*/LEAD.md'))]
-        os.environ['REVIEW_CATALOG'] = '\n\n'.join(s for s in leads if s.strip() and s.strip() != 'none') or 'none'
-        print('review-pr: project history supplied as leads, not standing obligations', file=sys.stderr)
-    argv = [str(SCRIPTS / 'review-round.sh'), a.phase, str(mirror), head, str(a.pr), base, a.executor]
-    print(f'review-pr: consumer host {host}', file=sys.stderr)
-    if a.phase == 'auto':
-        # Import only the host-selected runner; never anything from the implementation branch.
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('runner', SCRIPTS / 'lib/run-review.py')
-        runner = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(runner)
-        import ledger
         ledger_root = runner.root_for(mirror, str(a.pr))
-        starts, ends, originals = ledger.audit(ledger_root, mirror)
-        if len(starts) >= MAX_ROUNDS:
-            ledger.handoff(ledger_root, mirror, head)
-            return HANDOFF
-        response = Path(os.environ.get('REVIEW_RESPONSE', str(host / f'pr-{a.pr}-response.md')))
-        if response.exists():
-            os.environ['REVIEW_RESPONSE'] = str(response)
-        latest = starts[max(starts)] if starts else None
-        if latest and latest['head_sha'] == head and latest.get('base_sha') == base:
-            end = ends.get(latest['round'], {})
-            changed_inputs = any(path.exists() and digest(path.read_bytes()) != latest['inputs'].get(name)
-                                 for name, path in [('IMPLEMENTER_RESPONSE.md', response)])
-            if end.get('executed') or not changed_inputs:
-                ledger.report(ledger_root, mirror)
-                available = ledger.evidence_available(ledger.recompute(
-                    mirror, ledger_root / f"round-{latest['round']:04}", latest), end)
-                return review_exit(available, len(starts))
-        argv[1] = '2' if originals else '1'
-    return subprocess.run(argv).returncode
+        os.environ['REVIEW_HISTORY'] = catalog.render(catalog.harvest(ledger_root))
+        print('review-pr: project history supplied as leads, not standing obligations', file=sys.stderr)
+    argv = [a.phase, str(mirror), head, str(a.pr), base, a.executor]
+    print(f'review-pr: consumer host {host}', file=sys.stderr)
+    def still_current():
+        current = metadata_for_pr()
+        require((current['headRefOid'], current['baseRefOid']) == (head, target),
+                'stale-pr', f'PR changed during review; reviewed {head} against {target}, '
+                f'current {current["headRefOid"]} against {current["baseRefOid"]}')
+    # Cache selection and round allocation share the same lock, including cached returns.
+    return runner.main(argv, freshness_check=still_current)
 
 
 if __name__ == '__main__':
     try:
         sys.exit(main())
-    except (Rejected, OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
+    except (Rejected, OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
         sys.exit('review-pr: ' + str(e).replace('\n', '; '))

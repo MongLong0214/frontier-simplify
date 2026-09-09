@@ -1,7 +1,7 @@
 {
   "consumers": [
     {
-      "repository": "/Users/isaac/projects/agent-operator-score",
+      "repository": "/Users/isaac/WebstormProjects/agent-operator-score",
       "markers": [
         "agent-operator-score",
         "AOS"
