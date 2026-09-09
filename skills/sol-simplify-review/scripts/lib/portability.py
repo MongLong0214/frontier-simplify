@@ -7,20 +7,18 @@ import sys
 def check(directory, config):
     """No configured consumer's identity may appear in the portable skill.
 
-    One consumer is different: the repository the skill itself lives in. Its name is the
-    skill's own name, so the marker rule would forbid the skill from mentioning itself and
-    the repository could never review its own changes -- which is exactly the change most
-    worth reviewing, since every commit here edits a merge gate. A consumer marked `"self"`
-    contributes its PATHS but not its name: hardcoding where it sits on this disk is still
-    the defect the check is for, and knowing what it is called is not.
+    There was a `"self"` exception here, for the repository the skill lives in: its name is the
+    skill's own name, so registering it as a consumer would forbid the skill from mentioning
+    itself. That registration is gone -- installing the consumer hook on this repository made
+    every commit here a full run of the skill's own suite -- and the exception goes with it. An
+    exception nobody uses is worse than none: the next reader takes it for a requirement.
     """
     consumers = json.loads(Path(config).read_text())['consumers']
     markers = set()
     for c in consumers:
         markers.add(str(c['repository']).lower())
-        if not c.get('self'):
-            markers.add(Path(c['repository']).name.lower())
-            markers.update(str(m).lower() for m in c.get('markers', []) if str(m))
+        markers.add(Path(c['repository']).name.lower())
+        markers.update(str(m).lower() for m in c.get('markers', []) if str(m))
     markers.discard('')
     for path in Path(directory).rglob('*'):
         # A .pyc embeds the absolute path it was compiled from, so a stale __pycache__ makes
