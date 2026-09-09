@@ -3,6 +3,7 @@
 import json
 import io
 import importlib.util
+import fcntl
 import os
 import plistlib
 import runpy
@@ -106,6 +107,9 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     check('prose-recorded-without-inventory-envelope', True, lambda: r1.returncode == 10 and ledger.audit(root, repo)[1][1]['recorded'])
     check('prose-recorded-is-never-merge-success', True, lambda: r1.returncode != 0)
     check('original-bytes-preserved', True, lambda: (root / 'round-0001/ARTIFACT.md').read_bytes() == original.encode())
+    check('seal-stamps-the-started-protocol', True,
+          lambda: 'protocol_sha256: ' + ledger.read(root)[0]['context']['protocol_sha256']
+          in (root / 'round-0001/SEAL.txt').read_text())
     check('receipt-has-no-invented-verdict-or-count', True,
           lambda: not ({'accepted', 'verdict', 'item_count', 'fail_count'} & ledger.read(root)[-1].keys()))
     # Neither syntactic PASS nor tools plus a vacuous PASS can authorize a merge.
@@ -171,6 +175,19 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
           lambda: 'Safe merge completion is not measured' in host('report').stdout and 'escape rate:' not in host('report').stdout)
     check('report-does-not-create-evidence', True,
           lambda: host('report', pr='unobserved').returncode == 0 and not root_for('unobserved').exists())
+    reported = host('report')
+    check('report-exposes-recorded-runtime-and-finish-freshness', True,
+          lambda: ledger.read(root)[0]['skill_sha256'] in reported.stdout
+          and 'freshness at finish: FRESH' in reported.stdout)
+    progress = io.StringIO()
+    real_audit = ledger.audit
+    def audit_after_progress(*args, **kwargs):
+        require(bool(progress.getvalue()), 'test-progress', 'report stayed silent before auditing')
+        return real_audit(*args, **kwargs)
+    def report_progress():
+        with patch.object(sys, 'stdout', progress), patch.object(ledger, 'audit', audit_after_progress):
+            ledger.report(root, repo)
+    check('report-announces-evidence-check-before-audit', True, report_progress)
     (root / '.lock').chmod(0o444)
     root.chmod(0o555)
     try:
@@ -355,6 +372,22 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     consumer_roots = list((t / 'artifacts/consumers').glob('*/repository'))
     mirror = consumer_roots[0]
     consumer_root = Path(cmd(SCRIPTS / 'review-round.sh', 'path', mirror, h2, '42', env=prenv).stdout.strip())
+    # Reporting existing receipts needs neither live PR metadata nor a remote fetch, even
+    # while another invocation holds the mirror's fetch lock.
+    with (mirror.parent / '.lock').open('a') as fetch_lock:
+        fcntl.flock(fetch_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        offline_report = cmd(SCRIPTS / 'review-pr.sh', repo, '42', 'report', 'stub',
+                             env=dict(prenv, TEST_PR_METADATA=str(t / 'offline-metadata'),
+                                      REVIEW_LESSONS=str(t / 'unavailable-lessons')))
+    check('consumer-report-is-offline-and-independent-of-fetch-lock', True,
+          lambda: offline_report.returncode == 0 and '2 attempts' in offline_report.stdout)
+    unseen_report = t / 'report-only'
+    offline_empty = cmd(SCRIPTS / 'review-pr.sh', repo, '42', 'report', 'stub',
+                        env=dict(prenv, REVIEW_ARTIFACTS=str(unseen_report),
+                                 TEST_PR_METADATA=str(t / 'offline-metadata')))
+    check('consumer-report-without-history-is-offline-and-readonly', True,
+          lambda: offline_empty.returncode == 0 and 'NOT_REVIEWED' in offline_empty.stdout
+          and not unseen_report.exists())
     check('replayed-lead-reaches-both-prompt-phases', True,
           lambda: all('check the independently named facet' in (consumer_root / f'round-{n:04}/prompt.txt').read_text()
                       for n in (1, 2)))
@@ -484,6 +517,9 @@ elif mode in ('pr', 'gh-error'):
     data = json.loads(path.read_text())
     data['headRefOid'] = os.environ['TEST_NEXT_HEAD']
     path.write_text('invalid metadata' if mode == 'gh-error' else json.dumps(data))
+elif mode == 'protocol':
+    path = Path(os.environ['TEST_SKILL'])
+    path.write_bytes(path.read_bytes() + b'\\nUpdated during the review.\\n')
 sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
 ''')
     fake_codex.chmod(0o755)
@@ -496,10 +532,25 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
     check('completion-rechecks-mutable-local-head', True,
           lambda: moved.returncode == 5 and 'STALE' in moved.stdout
           and moved_rows[-1]['recorded'] and not moved_rows[-1]['fresh_at_finish'])
+    moved_report = host('report', pr='moving-head')
+    check('report-preserves-finish-staleness-and-reason', True,
+          lambda: 'freshness at finish: STALE' in moved_report.stdout
+          and 'requested head changed during review' in moved_report.stdout)
     for number, mode in [(62, 'pr'), (63, 'gh-error')]:
         result = consumer(number, dict(liveenv, TEST_EXECUTOR_MODE=mode), executor='codex')
         check('completion-rechecks-remote-' + mode, True,
               lambda: result.returncode == 5 and 'RECORDED STALE' in result.stdout)
+    starting_protocol = protocol.protocol_sha256(changed_install / 'scripts')
+    upgraded = cmd(changed_install / 'scripts/review-round.sh', '1', repo, h1, 'live-upgrade', base, 'codex',
+                   env=dict(liveenv, TEST_EXECUTOR_MODE='protocol', TEST_SKILL=str(changed_install / 'SKILL.md')))
+    upgrade_root = root_for('live-upgrade')
+    upgrade_rows = ledger.read(upgrade_root)
+    check('mid-round-upgrade-preserves-start-version-and-records-staleness', True,
+          lambda: upgraded.returncode == 5 and upgrade_rows[-1]['recorded']
+          and upgrade_rows[-1]['fresh_at_finish'] is False
+          and upgrade_rows[0]['skill_sha256'] == starting_protocol
+          and starting_protocol != protocol.protocol_sha256(changed_install / 'scripts')
+          and 'protocol_sha256: ' + starting_protocol in (upgrade_root / 'round-0001/SEAL.txt').read_text())
     ready = t / 'executor-ready.json'
     def wait_ready(process):
         until = time.monotonic() + 20
@@ -532,6 +583,10 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
                   lambda: proc.returncode == 5 and len(rows) == 2 and rows[-1]['executed']
                   and not rows[-1]['recorded'] and stopped(parent_pid) and stopped(child_pid)
                   and not Path(checkout).exists())
+            after_status = cmd(SCRIPTS / 'review-round.sh', 'status', repo, h1, label, base, 'codex', env=runenv)
+            check(label + '-leftover-lock-does-not-claim-running', True,
+                  lambda: after_status.returncode == 0 and 'FAILED' in after_status.stdout
+                  and 'RUNNING' not in after_status.stdout and (root_for(label) / '.lock').exists())
         finally:
             if proc.poll() is None:
                 proc.kill()

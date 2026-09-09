@@ -158,7 +158,7 @@ def status(root, repo, head, base=None, context=None):
         print(end.get('freshness_reason') or end['reason'])
 
 
-def audit(root, repo):
+def audit(root, repo, progress=False):
     starts, ends, originals = {}, {}, []
     for e in read(root):
         n = e['round']
@@ -172,6 +172,9 @@ def audit(root, repo):
                     'ledger-guards', 'an unexecuted attempt cannot claim a recorded review')
             ends[n] = e
     for n, start in starts.items():
+        if progress:
+            print(f'review: checking stored evidence for attempt {n}/{len(starts)}',
+                  file=sys.stderr, flush=True)
         d = root / f'round-{n:04}'
         verify_hashes(d, start['inputs'])
         end = ends.get(n)
@@ -231,7 +234,8 @@ def guard_rejections(ends):
 
 
 def report(root, repo):
-    starts, ends, originals = audit(root, repo)
+    print('Checking stored review evidence; use status to check for an active run.', flush=True)
+    starts, ends, originals = audit(root, repo, progress=True)
     print('Review evidence only; no row or exit status authorizes a merge.')
     print('attempt phase head outcome artifact')
     for n, s in starts.items():
@@ -241,6 +245,12 @@ def report(root, repo):
         else:
             outcome = 'LEGACY_ACCEPTED' if e.get('accepted') else 'LEGACY_REJECTED' if e else 'INTERRUPTED'
         print(n, s['phase'], s['head_sha'], outcome, root / f'round-{n:04}' / 'ARTIFACT.md')
+        print('  protocol SHA-256 at start: ' + s.get('skill_sha256',
+              s.get('context', {}).get('protocol_sha256', 'unknown')))
+        freshness = {True: 'FRESH', False: 'STALE'}.get(e.get('fresh_at_finish'), 'UNKNOWN')
+        print(f'  freshness at finish: {freshness} (recorded observation, not current PR state)')
+        if e.get('freshness_reason'):
+            print('  ' + e['freshness_reason'])
         if 'item_count' in e:
             print(f"  legacy parser counts (not distinct confirmed defects): {e['item_count']} items, {e.get('fail_count', '?')} FAIL")
         if e.get('reason'):

@@ -119,6 +119,8 @@ skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" st
   새 범위를 검토하되, **동일 PR의 총 3회 예산** 안에서 진행한다. 횟수를 초기화하지 않는다.
 - `status`는 모델 실행이나 Git fetch 없이 상태를 조회한다. 종료 직전 대상 커밋을 다시 확인하고,
   바뀌었거나 확인할 수 없으면 결과를 보존하되 오래된 결과로 표시한다.
+- `report`는 GitHub 조회·fetch 없이 로컬 근거를 읽고, 실행 시작 시 프로토콜 해시와 종료 시
+  신선도를 표시한다. 근거 검사 진행을 알리며, 과거 종료 시점의 신선도를 현재 PR 상태로 간주하지 않는다.
 - 실행 제한 시간은 기본 1,800초이며 `REVIEW_TIMEOUT`으로 바꾼다. timeout·SIGINT·SIGTERM은
   실행기의 프로세스 그룹을 종료하고 실패 기록을 남긴다.
 

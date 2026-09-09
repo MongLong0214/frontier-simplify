@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown,
-                      protocol_sha256, review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
+                      review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
 import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -142,7 +142,8 @@ def main(argv=None, freshness_check=None):
         inputs = []
         start = {'event': 'started', 'round': n, 'phase': phase, 'head_sha': head,
                  'base_sha': base, 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE,
-                 'inputs': {}, 'context': context}
+                 'inputs': {}, 'context': context, 'executor': executor,
+                 'skill_sha256': context['protocol_sha256']}
         started = False
         executed = False
         finished = False
@@ -185,6 +186,8 @@ def main(argv=None, freshness_check=None):
                 inputs += ['REMEDIATION.patch', 'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md']
             seal = run([SCRIPTS / 'target-seal.sh', 'seal', repo, base, head, d])
             require(seal.returncode == 0, 'target', seal.stderr.decode().strip())
+            with (d / 'SEAL.txt').open('a') as seal_file:
+                seal_file.write(f'protocol_sha256: {start["skill_sha256"]}\n')
             inputs += ['SEAL.txt', 'inventory.txt']
             freeze(d / 'DIFF.patch', git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head))
             freeze(d / 'CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', base, head))
@@ -205,8 +208,7 @@ def main(argv=None, freshness_check=None):
             require(rendered.returncode == 0, 'prompt', rendered.stderr.decode().strip())
             freeze(d / 'prompt.txt', rendered.stdout)
             inputs.append('prompt.txt')
-            start.update(inputs=ledger.hashes(d, inputs), skill_sha256=protocol_sha256(SCRIPTS),
-                         executor=executor)
+            start['inputs'] = ledger.hashes(d, inputs)
             ledger.append(root, start)
             started = True
             # Clone locally so consumer .git and its shared worktrees remain untouched.

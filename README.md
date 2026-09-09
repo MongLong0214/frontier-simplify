@@ -120,6 +120,8 @@ skills/sol-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBER" st
   a fresh scope review within the **same three-attempt PR budget**, never a reset.
 - `status` reads state without launching a model or fetching Git objects. Completion rechecks
   the requested commits; a moved or unavailable target leaves a preserved but stale result.
+- `report` reads local evidence without GitHub or fetches, showing the starting protocol fingerprint
+  and freshness at finish. It announces evidence checks; historical freshness is not current PR state.
 - Executors time out after 1,800 seconds by default (`REVIEW_TIMEOUT` changes it). Timeout and
   SIGINT/SIGTERM stop their process group and preserve the failed attempt.
 

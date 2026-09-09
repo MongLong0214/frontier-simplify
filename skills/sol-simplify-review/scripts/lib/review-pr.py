@@ -33,6 +33,14 @@ def main():
     # Stable across consumer worktrees; the trusted host supplies the remote and PR identity.
     host = root / 'consumers' / digest(origin.encode())[:16]
     mirror = host / 'repository'
+    if a.phase == 'report':
+        # Stored evidence does not depend on current PR metadata, network access, prompt
+        # inputs or the fetch lock. Do not create a mirror just to report no history.
+        if mirror.exists():
+            ledger.report(runner.root_for(mirror, str(a.pr)), mirror)
+        else:
+            print('NOT_REVIEWED: no local review history')
+        return 0
     def metadata_for_pr():
         data = json.loads(subprocess.check_output(['gh', 'pr', 'view', str(a.pr), '--json',
                          'number,headRefOid,baseRefOid,url'], cwd=repo, timeout=30))

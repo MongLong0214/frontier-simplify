@@ -147,6 +147,13 @@ The artifact still describes its original exact commits. Cached returns recheck 
 Freshness is an observation at that check, not a promise that the remote cannot change afterward.
 It does not decide whether the PR has merged or whether the review caused a fix.
 
+`SEAL.txt` and the ledger retain the starting protocol SHA-256 (skill instructions and scripts),
+including when the installation changes mid-round. `report` displays this identity and the recorded
+freshness at finish; older receipts without that observation say UNKNOWN. It reads local evidence
+without GitHub access or fetches and announces each attempt before rechecking its evidence. Large
+event streams or legacy histories can still take time to check. Use `status` for current PR state,
+not `report`'s historical freshness. The reviewer's exact `ARTIFACT.md` is never amended with host metadata.
+
 Consumer configuration lives outside the portable skill. `REVIEW_CONSUMERS_CONFIG` names a JSON
 file of consumer repositories and optional portability markers. The maintainer's `dogfood/` command
 can discover open PRs through an existing scheduler. Registration alone neither installs a scheduler
