@@ -30,7 +30,11 @@ def check(repo, trusted):
     with tempfile.TemporaryDirectory(prefix='review-commit-') as tmp:
         tmp = Path(tmp).resolve()
         archive = tmp / 'index.tar'
-        subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', '-o', str(archive), tree], check=True)
+        # Only the skill's own subtree. Archiving the whole index copied 8MB of repository on
+        # every commit -- benchmarks included -- to test a directory that is 276KB of it. The
+        # snapshot is still one Git tree, so what the tests read is still exactly what is staged.
+        subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', '-o', str(archive),
+                        tree, 'skills', 'dogfood'], check=True)
         staged = tmp / 'staged'
         staged.mkdir()
         with tarfile.open(archive) as tar:

@@ -40,7 +40,10 @@ try:
     hook.write_text(f'''#!/bin/sh
 # sol-simplify-review installed hook
 set -eu
-python3 {driver} "$(git rev-parse --show-toplevel)" {host}
+# stdin closed: git leaves it open for the hook, and a suite this spawns then waits on a
+# descriptor nobody will write to. Measured: the driver returns in under a second when run
+# by hand and never returns when run by git, with no difference but this.
+python3 {driver} "$(git rev-parse --show-toplevel)" {host} </dev/null
 if [ -x {before} ]; then exec {before} "$@"; fi
 ''')
     hook.chmod(0o755)
