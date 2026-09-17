@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown, artifact_root,
-                      review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
+                      review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS, child_environment)
 import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -20,7 +20,8 @@ SKILL = SCRIPTS.parent / 'SKILL.md'
 
 
 def run(args, cwd=None, stdout=subprocess.PIPE):
-    return subprocess.run(list(map(str, args)), cwd=cwd, stdout=stdout, stderr=subprocess.PIPE)
+    return subprocess.run(list(map(str, args)), cwd=cwd, stdout=stdout,
+                          stderr=subprocess.PIPE, env=child_environment())
 
 
 def root_for(repo, pr):

@@ -15,8 +15,23 @@ def require(condition, tag, reason):
         raise Rejected(f'GUARD FAIL [{tag}] {reason}')
 
 
-def git(repo, *args):
-    return subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.PIPE)
+def child_environment():
+    routing = {'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR',
+               'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'}
+    return {key: value for key, value in os.environ.items()
+            if key not in routing and (not key.startswith('REVIEW_') or key.startswith('REVIEW_TEST_'))}
+
+
+def git(repo, *args, literal=False):
+    env = child_environment()
+    options = []
+    if literal:
+        for key in ('GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS',
+                    'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS'):
+            env.pop(key, None)
+        options.append('--literal-pathspecs')
+    return subprocess.check_output(['git', *options, '-C', str(repo), *args],
+                                   env=env, stderr=subprocess.PIPE)
 
 
 def digest(data):
@@ -63,8 +78,11 @@ def review_context(scripts, executor, response):
 
 
 def changed(repo, base, head):
-    raw = git(repo, 'diff', '--no-renames', '--name-only', '-z', base, head)
-    return [p.decode('utf-8') for p in raw.split(b'\0') if p]
+    raw = git(repo, 'diff', '--no-renames', '--name-only', '-z', base, head, literal=True)
+    paths = [p.decode('utf-8') for p in raw.split(b'\0') if p]
+    require(all('\r' not in p and '\n' not in p for p in paths),
+            'target-path', 'newline filenames cannot be represented in the line-based target inventory')
+    return paths
 
 
 def hunks(repo, base, head):
@@ -75,8 +93,8 @@ def hunks(repo, base, head):
     """
     result = []
     for path in changed(repo, base, head):
-        patch = git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames',
-                    '--binary', '--unified=0', base, head, '--', path)
+        patch = git(repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames',
+                    '--binary', '--unified=0', base, head, '--', path, literal=True)
         starts = [m.start() for m in re.finditer(rb'^@@ ', patch, re.M)]
         parts = []
         if starts:
