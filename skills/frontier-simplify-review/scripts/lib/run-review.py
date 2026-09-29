@@ -2,6 +2,7 @@
 """Trusted host: freeze inputs, run one reviewer, recompute guards, append a receipt."""
 import argparse
 import fcntl
+import json
 import math
 import os
 from pathlib import Path
@@ -19,9 +20,9 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 SKILL = SCRIPTS.parent / 'SKILL.md'
 
 
-def run(args, cwd=None, stdout=subprocess.PIPE):
+def run(args, cwd=None, stdout=subprocess.PIPE, input=None):
     return subprocess.run(list(map(str, args)), cwd=cwd, stdout=stdout,
-                          stderr=subprocess.PIPE, env=child_environment())
+                          stderr=subprocess.PIPE, env=child_environment(), input=input)
 
 
 def root_for(repo, pr):
@@ -205,7 +206,7 @@ def main(argv=None, freshness_check=None):
                       'FULL_SUITE_STATUS_OR_UNKNOWN': os.environ.get('REVIEW_SUITE_STATUS', 'UNKNOWN'),
                       'TOOL_NOTES_OR_NONE': os.environ.get('REVIEW_TOOL_NOTES', 'none')}
             rendered = run([sys.executable, SCRIPTS / 'lib/render-prompt.py', SKILL, phase,
-                            *[f'{k}={v}' for k, v in values.items()]])
+                            '--values-stdin'], input=json.dumps(values, ensure_ascii=False).encode('utf-8'))
             require(rendered.returncode == 0, 'prompt', rendered.stderr.decode().strip())
             freeze(d / 'prompt.txt', rendered.stdout)
             inputs.append('prompt.txt')
@@ -234,7 +235,6 @@ def main(argv=None, freshness_check=None):
                 shutil.copyfile(d / name, clone / name)
             ledger.shell_guard('guard_no_seal_in_tree', clone)
             executor = start['executor']
-            prompt = (d / 'prompt.txt').read_text()
             env = {k: v for k, v in child_environment().items() if not k.startswith('REVIEW_')}
             # Name the model, not only the executor. `executor codex` while REVIEW_CODEX_MODEL
             # selects another model reads as though the swap did not apply, and the swap is the
@@ -255,7 +255,7 @@ def main(argv=None, freshness_check=None):
                     cmd = ['codex', 'exec', '--json', '-s', 'read-only']
                     if os.environ.get('REVIEW_CODEX_MODEL'):
                         cmd += ['-m', os.environ['REVIEW_CODEX_MODEL']]
-                    cmd += [prompt]
+                    cmd += ['-']
                 elif executor == 'claude':
                     # The checkout is deliberately NOT trusted, and the warning saying so is the
                     # property working. Its `.claude/settings.json` is a file from the tree under
@@ -265,12 +265,14 @@ def main(argv=None, freshness_check=None):
                     # dialog on the reviewer's behalf would grant a reviewed change the permissions
                     # it wrote for itself. Reported by a consumer as a possible defect; recorded so
                     # the next reader does not "fix" it.
-                    cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose', prompt]
+                    cmd = ['claude', '-p', '--input-format', 'text',
+                           '--output-format', 'stream-json', '--verbose']
                 else:
                     raise Rejected('GUARD FAIL [executor] use codex, claude, or stub')
-                with (d / 'events.jsonl').open('wb') as out, (d / 'executor.err').open('wb') as err:
+                with (d / 'events.jsonl').open('wb') as out, (d / 'executor.err').open('wb') as err, \
+                     (d / 'prompt.txt').open('rb') as prompt_file:
                     child = subprocess.Popen(cmd, cwd=clone, stdout=out, stderr=err,
-                                             stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+                                             stdin=prompt_file, env=env, start_new_session=True)
                     executed = True
                     try:
                         rc = child.wait(timeout=timeout)
