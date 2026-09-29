@@ -20,11 +20,12 @@ def replay(root, repo, base, head, out):
         end = ends.get(n, {})
         directory = root / f'round-{n:04}'
         checks = ledger.recompute(repo, directory, start) if end.get('executed') else []
-        available[n] = ledger.evidence_available(checks, end)
+        available[n] = ledger.evidence_available(checks, end, start)
         state = ('AVAILABLE' if available[n] else 'UNAVAILABLE' if end.get('executed') else
                  'NOT_EXECUTED' if end else 'INTERRUPTED')
         print(f'Attempt {n}: phase={start["phase"]} head={start["head_sha"]} '
-              f'evidence={state} historical_accepted={bool(end.get("accepted"))}', file=out)
+              f'evidence={state} checkout={ledger.observations_state(start, end)} '
+              f'historical_accepted={bool(end.get("accepted"))}', file=out)
         for check in checks:
             if not check['ok']:
                 print(f'  {check["guard"]}: {check["reason"]}', file=out)
