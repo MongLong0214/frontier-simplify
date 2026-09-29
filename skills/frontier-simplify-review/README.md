@@ -49,9 +49,9 @@ original-head..remediation-head diff. Reviewers must carry unresolved findings a
 |---|---|
 | `10` from a review or cached review | Execution evidence recorded; read the review and make the merge decision through the existing review workflow. |
 | `11` from a review or cached review | Automatic review budget exhausted; human handoff. The third intact review and all later calls return this. It can contain BLOCKERs, gaps or an unreviewed requested head. |
-| `5` from a review | Execution, target or evidence checks failed. |
-| Other nonzero | Invocation or environment error. |
-| `0` from `status`, `report`, `path` or `hunks` | The read-only utility completed. This is never a PR approval. |
+| `5` from a review | Valid invocation, but repository/ref, preparation, execution or evidence failed. The raw child exit/signal remains in its receipt. |
+| `2` | Command syntax or argument count is invalid; no attempt is reserved. |
+| `0` from help, `status`, `report`, `path` or `hunks` | The read-only utility completed. This is never a PR approval. |
 
 **Review execution never returns 0, including a PASS recommendation and every stub run.** A shell
 caller that previously used exit 0 as a merge gate must stop doing so. Do not reinterpret exit 10 as
@@ -111,12 +111,48 @@ provenance, and same-user access can rewrite the directory or disable a hook. Ev
 an OS sandbox or proof of exhaustive reading. Keep raw logs private: they may contain source and
 other tool output. Newline-containing filenames remain unsupported by the line-based target seal.
 
+New attempts use a v3 `started` reservation, then `prepared` with hashes of the frozen inputs,
+then `finished` with execution and final-checkout observations. Invalid invocations fail before
+reservation; failure or interruption afterward consumes the attempt. v1/v2/v3 records remain
+readable without rewriting their original outcomes. An old failed receipt is not a cached success,
+even if its former marker check has been retired. Final observations describe the end instant;
+older receipts without them say `NOT_OBSERVED`, not pass or fail. Phase 2 binds the original and
+previous review bytes, while a response-only follow-up still reviews the complete repair diff.
+
+If a ledger has an unrecorded round directory, `status` and `report` expose its path and writes
+stop with `ORPHANED_PREPARATION`. Preserve the directory and ledger for human review; do not delete,
+adopt, truncate or rename the root to restart the budget. A v2 writer cannot safely resume a v3
+root. Keep the v3 reader while fixing it, or stop automatic review and hand off. A normally
+interrupted v3 attempt can use an explicit retry only within the remaining budget.
+
 ## Host inputs and consumers
 
 `REVIEW_REQUIREMENTS`, `REVIEW_ROUTED`, `REVIEW_CATALOG`, `REVIEW_SUITE_STATUS` and `REVIEW_TOOL_NOTES`
 fill prompt inputs. `REVIEW_EXECUTOR` selects codex or claude; `REVIEW_CODEX_MODEL` optionally selects
 the model. Without an explicit base, phase 1 needs `REVIEW_TARGET_BRANCH`; phase 2 inherits its base.
 `REVIEW_RESPONSE` optionally names the implementer's separate response.
+
+The runner sends values to `render-prompt.py` as an internal JSON object on stdin; the renderer's
+`KEY=VALUE` arguments remain available for existing callers. It freezes the rendered prompt file
+and passes that file as finite stdin with EOF to the configured CLI. This does not raise the CLI's
+own input, token, time or cost limits. Unsupported size or transport must be reported as a failure
+or `UNAVAILABLE`, without truncation, hidden summarization or an automatic repeat. Oversized
+environment variables can still fail before the child starts; put large review text in files.
+
+Git subprocesses target their explicit repository and discard inherited Git routing variables.
+The source commit hook captures its source index separately, including an alternate index; staged
+entries/tree are its invariant, not raw index cache bytes. Explicit Git file paths use literal
+pathspecs (`--` alone does not disable globbing), and NUL-delimited path output stays separate from
+diagnostic stderr. `SCOPE.json` v1 records exact base/head file status, old/new mode and object ID,
+binary or null metadata and optional implementation/test hints. It is navigation, not coverage
+proof. Empty phase 1 and response-only phase 2 are distinct; singleton grouping is sufficient.
+
+The primary checkout is the exact review head. Write-required experiments belong in an authorized
+separate exact-head copy, with the changed files and result reported; the runner grants no extra
+permissions. The final host observation checks the primary tracked tree and copied inputs, not a
+claim that every file was read or that a temporary mutation never happened. Ordinary source/test
+text and repository-owned `SEAL.txt` are not proof of access to the host's private inputs. Actual
+target, input hash and no-clobber checks still apply.
 
 `REVIEW_EXPECTED_IDS` and `REVIEW_ESCAPES` no longer impose obligations or replenish the budget. Automatically harvested
 catalog candidates are attributed leads from the current PR, including rejected reviews. Repetition

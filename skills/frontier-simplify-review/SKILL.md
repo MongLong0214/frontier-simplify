@@ -29,6 +29,14 @@ parser, field count, or stored PASS authorizes merging. The runner returns a dis
 status even when the review recommends PASS. Use the existing maintainer review and product
 checks to decide the merge; do not keep rerunning a model to satisfy a format checker.
 
+The runner records a v3 reservation before input preparation and preserves the original and
+previous review bytes for follow-up. A failed or interrupted reservation counts toward the same
+three attempts. Older records remain readable without rewriting their outcome; an orphaned
+directory or damaged ledger requires preserving evidence and handing the PR to a human, not
+resetting its identity. `SCOPE.json` is exact Git metadata for navigation, not a coverage score.
+The primary checkout's final state is observed at completion, while write-required reproductions
+use a separate authorized exact-head copy or remain `UNAVAILABLE`.
+
 ## Host contract
 
 Supply an exact head, its merge-base with the target, the diff and changed-file list, a disposable
