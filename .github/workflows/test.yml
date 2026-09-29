@@ -35,5 +35,7 @@ jobs:
         run: python3 -B skills/frontier-simplify-review/scripts/selftest-witness.py
       - name: Primary checkout observations
         run: python3 -B skills/frontier-simplify-review/scripts/selftest-observations.py
+      - name: Exact Git scope metadata
+        run: python3 -B skills/frontier-simplify-review/scripts/selftest-scope.py
       - name: Full offline selftest
         run: env -u REVIEW_SELFTEST_FAST bash skills/frontier-simplify-review/scripts/selftest.sh
