@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone
-from protocol import digest, protocol_sha256, require, Rejected, MAX_ROUNDS
+from protocol import digest, protocol_sha256, require, Rejected, MAX_ROUNDS, child_environment
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
@@ -65,7 +65,7 @@ def shell_guard(name, *args):
     # catch that. Reported by a consumer whose artifact was BLOCKed by a check nobody had written.
     p = subprocess.run(['bash', '-c', 'source "$1"; shift; declare -F "$1" >/dev/null || exit 127; '
                                       '"$@"', 'guards', str(HERE / 'guards.sh'), name,
-                        *map(str, args)], capture_output=True, text=True)
+                        *map(str, args)], capture_output=True, text=True, env=child_environment())
     if p.returncode == 127:
         raise MissingGuard(f'{name} is not defined in guards.sh; the harness is broken, and this '
                            'says nothing about the review')
@@ -101,13 +101,14 @@ def recompute(repo, directory, start, checkout=None):
     def extracted():
         marker = '--final' if start.get('mode') == MODE else (
             '# Round 1 review inventory' if start['phase'] == 1 else '# Round 2 closure review')
-        p = subprocess.run([sys.executable, str(HERE / 'extract.py'), str(directory / 'events.jsonl'), marker], capture_output=True)
+        p = subprocess.run([sys.executable, str(HERE / 'extract.py'), str(directory / 'events.jsonl'), marker],
+                           capture_output=True, env=child_environment())
         require(p.returncode == 0 and p.stdout == (directory / 'ARTIFACT.md').read_bytes(),
                 'last-message', 'no nonempty final message, or artifact differs from executor output')
     check('last-message', extracted)
     def target():
         p = subprocess.run([str(SCRIPTS / 'target-seal.sh'), 'verify', str(repo), str(directory), start['head_sha']],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=child_environment())
         require(p.returncode == 0, 'target', p.stderr.strip())
     check('target', target)
     check('checkout', lambda: require((directory / 'checkout-head.txt').read_text().strip() == start['head_sha'],

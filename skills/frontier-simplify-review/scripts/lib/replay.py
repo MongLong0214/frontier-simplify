@@ -50,7 +50,7 @@ def replay(root, repo, base, head, out):
                   if line.startswith('base_sha:')]
     require(seal_bases == ['base_sha: ' + base], 'replay-base', 'receipt base differs from the sealed base')
     require((directory / 'DIFF.patch').read_bytes() == git(
-        repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head),
+        repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head),
         'replay-diff', 'preserved patch differs from Git at the requested base..head')
     require((directory / 'CHANGED.txt').read_bytes() == git(repo, 'diff', '--no-renames', '--name-only', base, head),
             'replay-changed', 'preserved changed-file list differs from Git at the requested base..head')

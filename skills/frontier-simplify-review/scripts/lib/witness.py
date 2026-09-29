@@ -9,16 +9,14 @@ import subprocess
 import sys
 import tempfile
 
-from protocol import digest, require, Rejected
+from protocol import digest, require, Rejected, child_environment
 
 HERE = Path(__file__).resolve().parent
 
 
 def environment():
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
-    for key in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR',
-                'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'NODE_OPTIONS'):
-        env.pop(key, None)
+    env = dict(child_environment(), PYTHONDONTWRITEBYTECODE='1')
+    env.pop('NODE_OPTIONS', None)
     return env
 
 

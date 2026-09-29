@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 import os
+import contextlib
 from pathlib import Path
 import subprocess
 import sys
@@ -34,6 +35,74 @@ class GitContextTests(unittest.TestCase):
                 before = dict(os.environ)
                 self.assertEqual(protocol.git(repos[0], 'rev-parse', 'HEAD'), heads[0])
                 self.assertEqual(dict(os.environ), before)
+
+    def test_adapter_and_executor_use_the_requested_checkout(self):
+        with tempfile.TemporaryDirectory(prefix='review-adapter-') as temp:
+            root = Path(temp).resolve()
+            clean = protocol.child_environment()
+            repo, other = root / 'source', root / 'other'
+            def git(target, *args):
+                return subprocess.check_output(['git', '-C', str(target), *args], env=clean)
+            for target in (repo, other):
+                target.mkdir()
+                git(target, 'init', '-q')
+                git(target, 'config', 'user.name', 'test')
+                git(target, 'config', 'user.email', 'test@example.invalid')
+                (target / 'a.txt').write_text(target.name + '\n')
+                git(target, 'add', '.')
+                git(target, 'commit', '-qm', 'base')
+            base = git(repo, 'rev-parse', 'HEAD').decode().strip()
+            (repo / 'a.txt').write_text('changed\n')
+            git(repo, 'commit', '-qam', 'head')
+            head = git(repo, 'rev-parse', 'HEAD').decode().strip()
+            git(repo, 'remote', 'add', 'origin', str(repo))
+            git(other, 'remote', 'add', 'origin', str(root / 'unrelated'))
+            other_origin = git(other, 'remote', 'get-url', 'origin')
+            source_entries = git(repo, 'ls-files', '--stage', '-z')
+            linked = root / 'linked'
+            git(repo, 'worktree', 'add', '--quiet', '--detach', str(linked), head)
+            fakebin = root / 'bin'
+            fakebin.mkdir()
+            metadata = json.dumps({'number': 42, 'headRefOid': head, 'baseRefOid': base,
+                                   'url': 'https://example.invalid/pull/42'})
+            (fakebin / 'gh').write_text('#!' + sys.executable + '\n' +
+                'import os,subprocess\n' +
+                'assert "REVIEW_HISTORY" not in os.environ\n' +
+                'assert subprocess.check_output(["git","rev-parse","HEAD"]).decode().strip() == ' + repr(head) + '\n' +
+                'print(' + repr(metadata) + ')\n')
+            (fakebin / 'codex').write_text('#!' + sys.executable + '\n' +
+                'import os,subprocess,json\n' +
+                'assert not any(k.startswith("REVIEW_") for k in os.environ)\n' +
+                'assert subprocess.check_output(["git","rev-parse","HEAD"]).decode().strip() == ' + repr(head) + '\n' +
+                'print(json.dumps({"type":"item.completed","item":{"type":"command_execution","command":"git rev-parse HEAD"}}))\n' +
+                'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Requested checkout inspected."}}))\n' +
+                'print(json.dumps({"type":"turn.completed"}))\n')
+            for executable in fakebin.iterdir():
+                executable.chmod(0o755)
+            spec = importlib.util.spec_from_file_location('adapter', SCRIPTS / 'lib/review-pr.py')
+            adapter = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(adapter)
+            for routing in (str(other / '.git'), '../other/.git'):
+                with self.subTest(routing=routing), patch.dict(os.environ, clean, clear=True):
+                    os.environ.update(PATH=str(fakebin) + os.pathsep + clean['PATH'],
+                                      GIT_DIR=routing, REVIEW_HISTORY='x' * 262144,
+                                      GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='color.ui', GIT_CONFIG_VALUE_0='always',
+                                      REVIEW_ARTIFACTS=str(root / ('artifacts-' + str(len(routing)))))
+                    before = dict(os.environ)
+                    with patch.object(sys, 'argv', ['review-pr.py', str(linked), '42', 'auto', 'codex']), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(adapter.main(), 10)
+                    directory = next(Path(os.environ['REVIEW_ARTIFACTS']).rglob('round-0001'))
+                    expected = git(repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
+                                   '--no-renames', '--binary', base, head)
+                    self.assertEqual((directory / 'DIFF.patch').read_bytes(), expected)
+                    self.assertEqual(replay.replay(directory.parent, repo, base, head, io.StringIO()), 10)
+                    # Adapter-owned metadata may change; inherited routing stays intact.
+                    self.assertEqual(os.environ['GIT_DIR'], before['GIT_DIR'])
+                    self.assertEqual(git(linked, 'rev-parse', 'HEAD').decode().strip(), head)
+                    self.assertEqual(git(other, 'remote', 'get-url', 'origin'), other_origin)
+                    self.assertFalse((other / '.git/FETCH_HEAD').exists())
+                    self.assertEqual(git(repo, 'ls-files', '--stage', '-z'), source_entries)
+                    self.assertEqual((repo / 'a.txt').read_bytes(), b'changed\n')
 
 
 class LiteralPathTests(unittest.TestCase):
@@ -80,6 +149,32 @@ class LiteralPathTests(unittest.TestCase):
         expected = protocol.hunks(self.repo, self.base, self.head)
         self.git('config', 'color.ui', 'always')
         self.assertEqual(protocol.hunks(self.repo, self.base, self.head), expected)
+
+    def test_both_rounds_and_replay_keep_uncolored_patches(self):
+        spec = importlib.util.spec_from_file_location('runner', SCRIPTS / 'lib/run-review.py')
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        root = Path(self.temp.name)
+        events = root / 'events.jsonl'
+        events.write_text('\n'.join(json.dumps(row) for row in [
+            {'type': 'item.completed', 'item': {'type': 'command_execution', 'command': 'git diff'}},
+            {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'Patch inspected.'}},
+            {'type': 'turn.completed'}]) + '\n')
+        with patch.dict(os.environ, self.env, clear=True):
+            os.environ.update(REVIEW_ARTIFACTS=str(root / 'artifacts'), REVIEW_STUB=str(events),
+                              GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='color.ui', GIT_CONFIG_VALUE_0='always')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(runner.main(['1', str(self.repo), self.head, 'color', self.base, 'stub']), 10)
+                (self.repo / 'one.txt').write_text('repair\n')
+                self.git('commit', '-qam', 'repair')
+                repair = self.git('rev-parse', 'HEAD').decode().strip()
+                self.assertEqual(runner.main(['2', str(self.repo), repair, 'color', self.base, 'stub']), 10)
+            directory = runner.root_for(self.repo, 'color')
+            for filename, before in [('DIFF.patch', self.base), ('REMEDIATION.patch', self.head)]:
+                expected = self.git('diff', '--no-color', '--no-ext-diff', '--no-textconv',
+                                    '--no-renames', '--binary', before, repair)
+                self.assertEqual((directory / 'round-0002' / filename).read_bytes(), expected)
+            self.assertEqual(replay.replay(directory, self.repo, self.base, repair, io.StringIO()), 10)
 
     def test_conflicting_pathspec_environment_is_local(self):
         expected = protocol.hunks(self.repo, self.base, self.head)
