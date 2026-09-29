@@ -215,6 +215,9 @@ IMPLEMENTER_RESPONSE.md contains the separate response, or a note that none was 
 REMEDIATION.patch and REMEDIATION_CHANGED.txt cover Round-1-head..Remediation-head.
 The host checked original bytes and ancestry. Verify your checkout is Remediation head.
 If integrity or the checkout is wrong, stop and report PROTOCOL_ERROR.
+Read the whole remediation diff from the original head, not only the latest commit. An empty
+diff can be a valid response-only follow-up: reconsider the original finding and its disputed
+evidence without treating unchanged code as a PASS or a protocol error.
 
 First assess whether the original review gives enough evidence to bound this follow-up. If it
 only asserts PASS, contains placeholders, or leaves coverage unexplained, say that a fresh scope
@@ -225,18 +228,26 @@ DISPUTED or UNVERIFIABLE. Preserve the IDs. Rerun the reproduction or an equally
 inspect the changed test bodies, and check affected siblings. Give evidence for closure; neither
 the implementer's response nor a passing test name establishes it. With no implementer response,
 derive the repair from the diff and say where its intent remains unclear.
-When a repair renames tests, remeasure the commands that select them. A combined selector can
-remain nonempty while silently dropping the only witness for one behavior.
+When a repair renames tests or selectors, measure whether each intended named witness ran. A
+combined selector can remain nonempty while silently dropping the only witness for one behavior.
 
 Read the entire remediation diff and behavior directly affected by it. Report causal remediation
 regressions, including correctness, data loss, availability, security and contract failures.
-Recheck a previously passing surface if the repair can change it. Explain unrelated changes and
-whether a new scope review is needed. Address explicitly stated coverage gaps; if they still
-cannot be reviewed or tested, carry the limitation and do not recommend PASS.
+If a shared type, return meaning, serialization, state transition, validator or config contract
+changed, recheck its unchanged caller, reader, writer and test. Recheck a previously passing
+surface when its premise can change. Explain unrelated changes and whether a new scope review
+is needed. Address explicitly stated coverage gaps; if they still cannot be reviewed or tested,
+carry the limitation and do not recommend PASS. A prior plan or PASS does not cap new evidence.
 
 Do not start an unrestricted search for more categories in unchanged original code. If you
 incidentally encounter a real original blocker, report it as ROUND1-ESCAPE with evidence at the
 original head. Keep it blocking; do not hide it to make the sequence appear to converge.
+Before finalizing, refute candidates against reachability, guards and actual code. Verify each
+line location on the correct old or current side, keeping meaningful whitespace; mark ambiguous
+anchors instead of guessing. Do not mutate the primary checkout. For a write-required check,
+use the existing witness or an allowed separate exact-SHA experiment and report its difference,
+command and result; if unavailable with current access, say UNAVAILABLE. Do not seek another
+executor or elevated permission automatically.
 
 Write a concise prose review. Recommend PASS only when the blocking findings are closed or
 disproved with evidence, the repair introduces no known blocker, and required review/tests are

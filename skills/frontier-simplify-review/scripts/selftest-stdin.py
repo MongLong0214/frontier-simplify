@@ -68,6 +68,27 @@ class RendererTests(unittest.TestCase):
                 self.assertIn(instruction, prompt)
         self.assertNotIn('SCOPE.json', prompt)
 
+    def test_real_round2_prompt_carries_followup_guidance(self):
+        skill = SCRIPTS.parent / 'SKILL.md'
+        values = {'REPOSITORY': 'repo', 'BASE_SHA': 'base', 'ROUND1_HEAD_SHA': 'original',
+                  'ROUND2_HEAD_SHA': 'repair', 'TRUSTED_INVENTORY_SHA256': 'digest',
+                  'INVENTORY_INTEGRITY_RESULT': 'ok', 'ATTEMPT_NUMBER': '2',
+                  'MAX_ROUNDS': '3', 'REQUIREMENT_SOURCES_OR_NONE': 'none',
+                  'KNOWN_ROUTED_OR_NONE': 'none', 'PROJECT_CLASS_CATALOG_OR_NONE': 'none',
+                  'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none'}
+        result = subprocess.run([sys.executable, str(RENDERER), str(skill), '2',
+                                 '--values-stdin'], input=json.dumps(values).encode(),
+                                capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prompt = result.stdout.decode()
+        for instruction in ('ROUND1_INVENTORY.md', 'PREVIOUS_REVIEW.md',
+                            'IMPLEMENTER_RESPONSE.md', 'REMEDIATION.patch',
+                            'response-only', 'unchanged caller', 'named witness',
+                            'ROUND1-ESCAPE', 'UNAVAILABLE'):
+            with self.subTest(instruction=instruction):
+                self.assertIn(instruction, prompt)
+        self.assertNotIn('SCOPE.json', prompt)
+
 
 class ReviewStdinTests(unittest.TestCase):
     def setUp(self):
