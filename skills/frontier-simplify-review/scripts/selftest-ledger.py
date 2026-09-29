@@ -71,6 +71,8 @@ with tempfile.TemporaryDirectory(prefix='review-ledger-test-') as temporary:
         previous = ledger.read(old)
         previous[0]['inputs'] = previous[1]['inputs']
         previous.pop(1)
+        previous[0].pop('scope_schema_version', None)
+        previous[0]['inputs'].pop('SCOPE.json', None)
         if mode is None:
             previous[0].pop('mode')
             previous[-1]['accepted'] = previous[-1].pop('recorded')

@@ -18,6 +18,15 @@ def prose_mode(start):
     return start.get('mode') in PROSE_MODES
 
 
+def scope_version(start):
+    if 'scope_schema_version' not in start:
+        return None
+    version = start['scope_schema_version']
+    require(type(version) is int and version == 1, 'scope-version',
+            'unsupported declared scope schema version')
+    return version
+
+
 def encode(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()
 
@@ -88,6 +97,8 @@ def recompute(repo, directory, start, checkout=None):
             checks.append({'guard': name, 'ok': False, 'reason': str(e).replace('\n', '; ')})
     def inputs():
         mandatory = {'SEAL.txt', 'inventory.txt', 'DIFF.patch', 'CHANGED.txt', 'prompt.txt'}
+        if scope_version(start) == 1:
+            mandatory.add('SCOPE.json')
         if start['phase'] == 2:
             mandatory |= {'ROUND1_INVENTORY.md', 'IMPLEMENTER_RESPONSE.md', 'REMEDIATION.patch',
                           'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md'}
@@ -97,6 +108,15 @@ def recompute(repo, directory, start, checkout=None):
                     'inventory-integrity', 'original review copy differs from trusted digest')
         require(mandatory <= start['inputs'].keys(), 'input-digests', 'required input digest missing')
         verify_hashes(directory, start['inputs'])
+        if scope_version(start) == 1:
+            scope = json.loads((directory / 'SCOPE.json').read_bytes())
+            require(isinstance(scope, dict), 'scope-target', 'frozen scope must be a JSON object')
+            require(type(scope.get('schema_version')) is int and scope['schema_version'] == 1 and
+                    scope.get('input_kind') == ('change' if start['phase'] == 1 else 'remediation') and
+                    scope.get('from_sha') == (start['base_sha'] if start['phase'] == 1 else
+                                              start['round1_head_sha']) and
+                    scope.get('to_sha') == start['head_sha'], 'scope-target',
+                    'frozen scope does not match the recorded exact commit pair')
     check('input-digests', inputs)
     check('executor-exit', lambda: require((directory / 'executor-exit.txt').read_text().strip() == '0',
                                           'executor-exit', 'executor failed; see executor.err'))
@@ -195,6 +215,7 @@ def audit(root, repo, progress=False):
         if e['event'] == 'started':
             require(n == len(starts) + 1, 'ledger-rounds', 'round numbers were skipped or reset')
             require(e.get('mode') in {None, *PROSE_MODES}, 'ledger-version', 'unknown receipt mode')
+            scope_version(e)
             starts[n] = e
         elif e['event'] == 'prepared':
             require(n in starts and n not in prepared and n not in ends and starts[n].get('mode') == MODE,
@@ -217,6 +238,8 @@ def audit(root, repo, progress=False):
         d = root / f'round-{n:04}'
         if n in prepared:
             require(start['inputs'] == {}, 'ledger-prepared', 'v3 reservation changed its inputs before preparation')
+            require(scope_version(start) != 1 or 'SCOPE.json' in prepared[n]['inputs'],
+                    'input-digests', 'declared scope input digest missing from preparation')
             start = dict(start, inputs=prepared[n]['inputs'])
             starts[n] = start
         verify_hashes(d, start['inputs'])

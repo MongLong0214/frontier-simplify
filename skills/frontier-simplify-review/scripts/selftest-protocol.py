@@ -328,8 +328,11 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
         (binding_root / 'ledger.jsonl').unlink()
         for row in rows:
             ledger.append(binding_root, row)
+        # New scope binding detects a rehashed base substitution during ledger audit, before
+        # replay reaches its older seal-specific base check.
+        expected_guard = 'ledger-guards' if name == 'base' else tag
         check(tag + '-rejects-rehashed-substitution', False,
-              lambda: replay.replay(binding_root, repo, requested_base, h1, io.StringIO()), tag)
+              lambda: replay.replay(binding_root, repo, requested_base, h1, io.StringIO()), expected_guard)
     # Hunk navigation still includes all Git changes, including metadata and rename endpoints.
     (repo / 'space name.txt').write_text('new\n')
     (repo / 'binary.bin').write_bytes(b'\0new')

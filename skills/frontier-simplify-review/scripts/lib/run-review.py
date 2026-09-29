@@ -15,6 +15,7 @@ import tempfile
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown, artifact_root,
                       review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS, child_environment)
 import ledger
+from scope import build_scope, scope_bytes
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 SKILL = SCRIPTS.parent / 'SKILL.md'
@@ -243,11 +244,19 @@ def main(argv=None, freshness_check=None):
                 previous_bytes = (root / f'round-{prior:04}' / 'ARTIFACT.md').read_bytes()
                 start.update(round1_head_sha=r1head, inventory_sha256=digest(inventory_bytes),
                              previous_round=prior)
+            scope = build_scope(repo, base if phase == 1 else r1head, head,
+                                'change' if phase == 1 else 'remediation')
+            require(phase == 2 or bool(scope['files']), 'empty-target',
+                    'phase 1 requires a nonempty Base..Reviewed-head change')
+            frozen_scope = scope_bytes(scope)
+            start['scope_schema_version'] = 1
             require(not d.exists() and not d.is_symlink(), 'orphaned-preparation',
                     f'unledgered round directory already exists: {d}')
             ledger.append(root, start)
             started = True
             d.mkdir()
+            freeze(d / 'SCOPE.json', frozen_scope)
+            inputs.append('SCOPE.json')
             if phase == 2:
                 freeze(d / 'ROUND1_INVENTORY.md', inventory_bytes)
                 inputs.append('ROUND1_INVENTORY.md')
