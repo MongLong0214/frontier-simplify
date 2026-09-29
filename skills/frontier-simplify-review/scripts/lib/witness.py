@@ -1,6 +1,7 @@
 """Replay one unchanged, top-level Node test against two exact commits. No model verdicts."""
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -24,24 +25,59 @@ def git(repo, *args):
     return subprocess.check_output(['git', '-C', str(repo), *args], env=environment(), stderr=subprocess.PIPE)
 
 
+def finite_timeout(value):
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        require(False, 'witness-timeout', 'timeout must be positive finite seconds')
+    require(math.isfinite(seconds) and seconds > 0, 'witness-timeout',
+            'timeout must be positive finite seconds')
+    return seconds
+
+
 def run_named(checkout, file, name, output, timeout=60):
     """Accept only a unique, unskipped named test result, never a process failure as a kill."""
+    timeout = finite_timeout(timeout)
     # Escape for JavaScript's RegExp, whose accepted escapes differ from Python's re.escape.
     pattern = '^' + re.sub(r'([\\^$.*+?()\[\]{}|])', r'\\\1', name) + '$'
     command = ['node', '--test', '--test-reporter=' + str(HERE / 'node-witness-reporter.mjs'),
                '--test-name-pattern=' + pattern, file]
     (output / 'command.txt').write_text('\n'.join(command) + '\n')
-    with (output / 'events.jsonl').open('wb') as stdout, (output / 'stderr.txt').open('wb') as stderr:
-        child = subprocess.Popen(command, cwd=checkout, env=environment(), stdout=stdout,
-                                 stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True)
-        try:
-            rc = child.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
-            (output / 'exit.txt').write_text('TIMEOUT\n')
-            raise Rejected('GUARD FAIL [witness-timeout] no completed named assertion')
-    (output / 'exit.txt').write_text(str(rc) + '\n')
+    def cancelled(signum, frame):
+        raise InterruptedError(f'witness cancelled by {signal.Signals(signum).name}')
+    old_handlers = {}
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            old_handlers[sig] = signal.signal(sig, cancelled)
+        with (output / 'events.jsonl').open('wb') as stdout, (output / 'stderr.txt').open('wb') as stderr:
+            child = None
+            try:
+                # Defer cancellation until Popen has returned the group we must reap.
+                previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+                try:
+                    child = subprocess.Popen(command, cwd=checkout, env=environment(), stdout=stdout,
+                                             stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True)
+                finally:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                try:
+                    rc = child.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    (output / 'exit.txt').write_text('TIMEOUT\n')
+                    raise Rejected('GUARD FAIL [witness-timeout] no completed named assertion')
+                except InterruptedError as error:
+                    (output / 'exit.txt').write_text(str(error) + '\n')
+                    raise Rejected('GUARD FAIL [witness-cancelled] ' + str(error)) from error
+                (output / 'exit.txt').write_text(str(rc) + '\n')
+            finally:
+                if child is not None:
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    child.wait()
+    finally:
+        for sig, handler in old_handlers.items():
+            signal.signal(sig, handler)
     rows = [json.loads(line) for line in (output / 'events.jsonl').read_text().splitlines()]
     named = [r for r in rows if r.get('name') == name and r.get('file') and
              Path(r['file']).resolve() == (checkout / file).resolve()]
@@ -60,6 +96,7 @@ def run_named(checkout, file, name, output, timeout=60):
 
 
 def replay(repo, before, after, file, name, source, lesson, output, timeout=60):
+    timeout = finite_timeout(timeout)
     repo, source, output = Path(repo).resolve(), Path(source).resolve(), Path(output).resolve()
     require(not output.is_relative_to(repo), 'witness-location', 'keep replay output outside the consumer checkout')
     path = Path(file)
@@ -117,7 +154,6 @@ def main():
     p.add_argument('--timeout', type=float, default=60, help='seconds per named test process')
     a = p.parse_args()
     try:
-        require(a.timeout > 0, 'witness-timeout', 'timeout must be positive')
         print(replay(a.repository, a.before, a.after, a.file, a.name, a.source_review,
                      a.lesson, a.output, a.timeout))
         return 0
