@@ -176,6 +176,77 @@ class LiteralPathTests(unittest.TestCase):
                 self.assertEqual((directory / 'round-0002' / filename).read_bytes(), expected)
             self.assertEqual(replay.replay(directory, self.repo, self.base, repair, io.StringIO()), 10)
 
+    def test_actual_wrapper_delivers_literal_paths_and_long_prompt(self):
+        root = Path(self.temp.name)
+        fakebin = root / 'bin'
+        fakebin.mkdir()
+        fake = fakebin / 'codex'
+        fake.write_text('#!' + sys.executable + '\n' + '''
+import hashlib, json, os, subprocess, sys
+from pathlib import Path
+def git(*args):
+    return subprocess.check_output(['git', *args], stderr=subprocess.PIPE)
+start, head, base = (os.environ[key] for key in ('TEST_FROM', 'TEST_TO', 'TEST_BASE'))
+scope_bytes = Path('SCOPE.json').read_bytes()
+scope = json.loads(scope_bytes)
+paths = {p.decode() for p in git('diff', '--no-renames', '--name-only', '-z', start, head).split(b'\\0') if p}
+assert scope['from_sha'] == start and scope['to_sha'] == head
+assert scope['input_kind'] == os.environ['TEST_KIND']
+assert {item['path'] for item in scope['files']} == paths
+assert Path('DIFF.patch').read_bytes() == git('diff', '--no-color', '--no-ext-diff',
+    '--no-textconv', '--no-renames', '--binary', base, head)
+assert Path('CHANGED.txt').read_bytes() == git('diff', '--no-renames', '--name-only', base, head)
+if scope['input_kind'] == 'remediation':
+    assert Path('REMEDIATION.patch').read_bytes() == git('diff', '--no-color', '--no-ext-diff',
+        '--no-textconv', '--no-renames', '--binary', start, head)
+    assert Path('REMEDIATION_HUNKS.md').read_bytes()
+assert not Path('SEAL.txt').exists()
+prompt = sys.stdin.buffer.read()
+assert b'SCOPE.json' in prompt and len(prompt) > 262144
+assert not any(k.startswith('REVIEW_') for k in os.environ)
+assert all(len(arg) < 1000 for arg in sys.argv[1:])
+Path(os.environ['TEST_LOG']).write_text(json.dumps({'paths': sorted(paths),
+    'prompt_sha256': hashlib.sha256(prompt).hexdigest(), 'scope_sha256': hashlib.sha256(scope_bytes).hexdigest(),
+    'argv': sys.argv[1:]}))
+for row in [{'type':'item.completed','item':{'type':'command_execution','command':'cat SCOPE.json'}},
+            {'type':'item.completed','item':{'type':'agent_message','text':'Inputs inspected.'}},
+            {'type':'turn.completed'}]:
+    print(json.dumps(row))
+''')
+        fake.chmod(0o755)
+        artifacts = root / 'integration-artifacts'
+        catalog = 'lead-' * 53000
+        def review(phase, head, start, kind):
+            log = root / ('observed-' + phase + '.json')
+            env = dict(self.env, PATH=str(fakebin) + os.pathsep + self.env['PATH'],
+                       REVIEW_ARTIFACTS=str(artifacts), REVIEW_CATALOG=catalog,
+                       TEST_FROM=start, TEST_TO=head, TEST_BASE=self.base,
+                       TEST_KIND=kind, TEST_LOG=str(log),
+                       GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='color.ui',
+                       GIT_CONFIG_VALUE_0='always')
+            result = subprocess.run([str(SCRIPTS / 'review-round.sh'), phase, str(self.repo),
+                                     head, 'literal-integration', self.base, 'codex'],
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 10, result.stderr[-1200:])
+            self.assertTrue(log.exists())
+            return json.loads(log.read_text())
+        first = review('1', self.head, self.base, 'change')
+        self.assertEqual(first['paths'], sorted(self.paths))
+        (self.repo / '*.txt').write_text('repaired literal glob\n')
+        (self.repo / 'a?.txt').write_text('repaired literal question\n')
+        (self.repo / ':(glob)*').write_text('repaired magic-shaped name\n')
+        self.git('commit', '-qam', 'repair')
+        repaired = self.git('rev-parse', 'HEAD').decode().strip()
+        second = review('2', repaired, self.head, 'remediation')
+        self.assertEqual(second['paths'], sorted(['*.txt', 'a?.txt', ':(glob)*']))
+        rounds = next(artifacts.glob('*/literal-integration'))
+        for number, observed in ((1, first), (2, second)):
+            directory = rounds / f'round-{number:04}'
+            self.assertEqual(observed['prompt_sha256'], protocol.digest((directory / 'prompt.txt').read_bytes()))
+            self.assertEqual(observed['scope_sha256'], protocol.digest((directory / 'SCOPE.json').read_bytes()))
+            self.assertEqual(observed['argv'], ['exec', '--json', '-s', 'read-only', '-'])
+        self.assertEqual(replay.replay(rounds, self.repo, self.base, repaired, io.StringIO()), 10)
+
     def test_conflicting_pathspec_environment_is_local(self):
         expected = protocol.hunks(self.repo, self.base, self.head)
         with patch.dict(os.environ, GIT_LITERAL_PATHSPECS='1', GIT_GLOB_PATHSPECS='1',
