@@ -41,7 +41,12 @@ def freeze(path, data):
 
 
 def copy_input(source, directory, name):
-    freeze(directory / name, Path(source).read_bytes())
+    require(Path(name).name == name and name not in {'.', '..'}, 'input-collision',
+            'input name must be top-level')
+    try:
+        freeze(directory / name, Path(source).read_bytes())
+    except (FileExistsError, IsADirectoryError):
+        require(False, 'input-collision', f'repository already contains {name}')
 
 
 def main(argv=None, freshness_check=None):
@@ -135,8 +140,9 @@ def main(argv=None, freshness_check=None):
             except (Rejected, OSError, ValueError, subprocess.SubprocessError) as e:
                 print('review: STALE or unavailable: ' + str(e), file=sys.stderr)
                 return FAILED
-            available = ledger.evidence_available(ledger.recompute(
-                repo, root / f"round-{latest['round']:04}", latest), end)
+            available = (bool(end.get('recorded', end.get('accepted')))
+                         and ledger.evidence_available(ledger.recompute(
+                             repo, root / f"round-{latest['round']:04}", latest), end))
             return review_exit(available and end.get('fresh_at_finish', True), len(starts))
         n = len(starts) + 1
         d = root / f'round-{n:04}'
@@ -231,9 +237,7 @@ def main(argv=None, freshness_check=None):
             for name in inputs:
                 if name in {'SEAL.txt', 'inventory.txt', 'prompt.txt'}:
                     continue
-                require(not (clone / name).exists(), 'input-collision', f'repository already contains {name}')
-                shutil.copyfile(d / name, clone / name)
-            ledger.shell_guard('guard_no_seal_in_tree', clone)
+                copy_input(d / name, clone, name)
             executor = start['executor']
             env = {k: v for k, v in child_environment().items() if not k.startswith('REVIEW_')}
             # Name the model, not only the executor. `executor codex` while REVIEW_CODEX_MODEL

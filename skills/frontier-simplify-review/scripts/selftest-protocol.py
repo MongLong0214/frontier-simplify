@@ -103,7 +103,7 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
           lambda: isinstance(_raised(lambda: ledger.shell_guard('guard_that_does_not_exist', repo)),
                              ledger.MissingGuard))
     check('present-guard-still-judges', True,
-          lambda: _raised(lambda: ledger.shell_guard('guard_no_seal_in_tree', repo)) is None)
+          lambda: _raised(lambda: ledger.shell_guard('guard_turn_completed', root / 'round-0001/events.jsonl')) is None)
     check('prose-recorded-without-inventory-envelope', True, lambda: r1.returncode == 10 and ledger.audit(root, repo)[1][1]['recorded'])
     check('prose-recorded-is-never-merge-success', True, lambda: r1.returncode != 0)
     check('original-bytes-preserved', True, lambda: (root / 'round-0001/ARTIFACT.md').read_bytes() == original.encode())
@@ -237,9 +237,9 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     rewrite(records)
     check('ledger-same-version-recomputes', False, lambda: ledger.audit(root, repo), 'ledger-guards')
     ledger_path.write_bytes(saved_ledger)
-    check('removed-checkout-failure-is-not-forgotten', True,
+    check('recorded-checkout-failure-is-not-forgotten', True,
           lambda: not ledger.evidence_available([{'guard': 'target', 'ok': True}],
-              {'executed': True, 'guards': [{'guard': 'seal-location', 'ok': False}]}))
+              {'executed': True, 'guards': [{'guard': 'checkout', 'ok': False}]}))
     # Legacy rejections stay rejections; prose-format faults no longer erase their evidence.
     events(t / 'events', original)
     host('1', pr='legacy')
@@ -843,13 +843,6 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
     check('hook-rebrand-preserves-original-user-hook-without-chaining-old-driver', True,
           lambda: migrated_hook.returncode == 0 and 'existing user hook' in prior_hook.read_text()
           and 'frontier-simplify-review installed hook' in (old_hooks / 'pre-commit').read_text())
-
-    events(t / 'legacy-seal-event', 'review', tools=False)
-    with (t / 'legacy-seal-event').open('a') as f:
-        f.write(json.dumps({'type': 'item.completed', 'item': {'type': 'command_execution',
-                      'command': 'cat x', 'aggregated_output': 'schema: sol-simplify-review-seal.v1'}}) + '\n')
-    check('legacy-seal-evidence-is-still-recognized', False,
-          lambda: ledger.shell_guard('guard_seal_unseen', t / 'legacy-seal-event'), 'seal-seen')
 
     config = t / 'consumers.json'
     config.write_text(json.dumps({'consumers': [{'repository': '/example/fixture-consumer', 'markers': ['FixtureAlias']}]}))

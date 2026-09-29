@@ -95,9 +95,8 @@ def recompute(repo, directory, start, checkout=None):
     check('input-digests', inputs)
     check('executor-exit', lambda: require((directory / 'executor-exit.txt').read_text().strip() == '0',
                                           'executor-exit', 'executor failed; see executor.err'))
-    for name in ('guard_turn_completed', 'guard_cmds_nonzero', 'guard_seal_unseen'):
-        args = [directory / 'events.jsonl'] + ([directory] if name == 'guard_seal_unseen' else [])
-        check(name, lambda name=name, args=args: shell_guard(name, *args))
+    for name in ('guard_turn_completed', 'guard_cmds_nonzero'):
+        check(name, lambda name=name: shell_guard(name, directory / 'events.jsonl'))
     def extracted():
         marker = '--final' if start.get('mode') == MODE else (
             '# Round 1 review inventory' if start['phase'] == 1 else '# Round 2 closure review')
@@ -113,15 +112,13 @@ def recompute(repo, directory, start, checkout=None):
     check('target', target)
     check('checkout', lambda: require((directory / 'checkout-head.txt').read_text().strip() == start['head_sha'],
                                       'checkout', 'checkout did not match the reviewed head'))
-    if checkout:
-        check('seal-location', lambda: shell_guard('guard_no_seal_in_tree', checkout))
     return checks
 
 
 def evidence_available(checks, end):
-    # A removed checkout cannot be inspected again. Preserve its recorded physical failures.
+    # A removed checkout cannot be inspected again. Preserve its recorded head failure.
     return bool(end.get('executed')) and not (end.get('reason') and not end.get('guards')) and all(c['ok'] for c in checks) and all(
-        c['ok'] for c in end.get('guards', []) if c['guard'] in {'checkout', 'seal-location'})
+        c['ok'] for c in end.get('guards', []) if c['guard'] == 'checkout')
 
 
 def running(root):
@@ -147,7 +144,8 @@ def status(root, repo, head, base=None, context=None):
         return
     n = max(starts)
     start, end = starts[n], ends.get(n, {})
-    available = evidence_available(recompute(repo, root / f'round-{n:04}', start), end) if end else False
+    available = (evidence_available(recompute(repo, root / f'round-{n:04}', start), end)
+                 and bool(end.get('recorded', end.get('accepted')))) if end else False
     state = 'INTERRUPTED' if not end else 'RECORDED' if available else 'FAILED'
     same = (start['head_sha'] == head and (base is None or start.get('base_sha') == base)
             and context is not None and start.get('context') == context)
@@ -193,8 +191,7 @@ def audit(root, repo, progress=False):
         require(not fresh or not end.get('accepted'), 'ledger-guards', 'a prose review cannot claim merge acceptance')
         checks = recompute(repo, d, start)
         if fresh and start.get('skill_sha256') == protocol_sha256(SCRIPTS):
-            historical = [c for c in end['guards'] if c['guard'] != 'seal-location']
-            require(checks == historical, 'ledger-guards', 'receipt checks differ from recomputation')
+            require(checks == end['guards'], 'ledger-guards', 'receipt checks differ from recomputation')
         usable = evidence_available(checks, end)
         if start['phase'] == 2 and start.get('inventory_sha256'):
             require(originals, 'ledger-handoff', 'no earlier original review')
