@@ -11,7 +11,7 @@ import tempfile
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS / 'lib'))
 from protocol import Rejected
-from scope import _numstat, _path, _raw_files, build_scope, scope_bytes
+from scope import _finalize_groups, _numstat, _path, _raw_files, build_scope, group_files, scope_bytes
 
 
 def git(repo, *args):
@@ -174,4 +174,46 @@ with tempfile.TemporaryDirectory(prefix='review-scope-test-') as temporary:
         missing_rejected = False
     results.append(check('missing-commit-is-not-empty-success', missing_rejected))
 
-sys.exit(0 if all(results) else 1)
+def sample(number, path, status='M', binary=False, mode='100644'):
+    return {'id': f'f-{number}', 'path': path, 'status': status,
+            'old': {'mode': mode}, 'new': {'mode': mode}, 'is_binary': binary}
+
+
+group_results = []
+group_results.append(check('empty-and-singleton-grouping',
+                           group_files([]) == [] and group_files([sample(0, 'solo.py')]) ==
+                           [{'id': 'g-0', 'primary_file_ids': ['f-0'], 'basis': 'singleton'}]))
+paired = [sample(10, 'pkg/한글,part:two.test.py'),
+          sample(2, 'pkg/한글,part:two.py'),
+          sample(11, 'pkg/한글,part:two.spec.py'),
+          sample(3, 'other/한글,part:two.test.py'),
+          sample(4, 'pkg/한글,part:two.test.ts'),
+          sample(5, 'pkg/한글,part:two.ts')]
+expected = [(['f-2', 'f-10', 'f-11'], 'implementation-test'),
+            (['f-3'], 'singleton'), (['f-4', 'f-5'], 'implementation-test')]
+groups = group_files(paired)
+group_results.append(check('clear-pairs-only-and-numeric-order',
+                           [(g['primary_file_ids'], g['basis']) for g in groups] == expected
+                           and [g['id'] for g in groups] == ['g-0', 'g-1', 'g-2']))
+group_results.append(check('group-order-independent-of-input-order',
+                           groups == group_files(list(reversed(paired)))))
+ambiguous = [sample(0, 'pkg/a.py'), sample(1, 'pkg/a.test.py', 'D'),
+             sample(2, 'pkg/b.py'), sample(3, 'pkg/b.test.py', binary=True),
+             sample(4, 'pkg/c.py'), sample(5, 'pkg/c.test.py', mode='120000'),
+             sample(6, 'pkg/d.py'), sample(7, 'pkg/d.test.py', status='T'),
+             sample(8, 'pkg/e.py'), sample(9, 'pkg/e.test.py', mode='160000')]
+group_results.append(check('ineligible-files-remain-singletons',
+                           all(g['basis'] == 'singleton' for g in group_files(ambiguous))))
+missing, missing_error = _finalize_groups(paired[:2], [(['f-2'], 'singleton')])
+group_results.append(check('missing-assignment-recovers-singleton',
+                           missing_error is None and
+                           {f for g in missing for f in g['primary_file_ids']} == {'f-2', 'f-10'}))
+for label, bad in [('duplicate', [(['f-2', 'f-10'], 'implementation-test'),
+                                   (['f-10'], 'singleton')]),
+                   ('unknown', [(['f-2', 'f-999'], 'implementation-test')])]:
+    fallback, diagnostic = _finalize_groups(paired[:2], bad)
+    group_results.append(check(label + '-assignment-falls-back-to-all-singletons',
+                               diagnostic and len(fallback) == 2 and
+                               all(g['basis'] == 'singleton' for g in fallback)))
+
+sys.exit(0 if all(results + group_results) else 1)
