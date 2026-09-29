@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from protocol import digest, git, require, Rejected, review_context, artifact_root, child_environment
+from protocol import digest, git, require, Rejected, review_context, artifact_root, child_environment, FAILED
 import catalog
 import ledger
 
@@ -109,4 +109,5 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except (Rejected, OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
-        sys.exit('review-pr: ' + str(e).replace('\n', '; '))
+        print('review-pr: ' + str(e).replace('\n', '; '), file=sys.stderr)
+        sys.exit(FAILED)

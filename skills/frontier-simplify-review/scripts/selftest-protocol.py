@@ -212,28 +212,28 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
         for record in records:
             ledger.append(root, record)
     records = ledger.read(root)
-    records[1]['recorded'] = False
+    records[-1]['recorded'] = False
     rewrite(records)
     check('ledger-false-result-even-with-rehashed-chain', False, lambda: ledger.audit(root, repo), 'ledger-guards')
     ledger_path.write_bytes(saved_ledger)
     records = ledger.read(root)
-    records[1]['accepted'] = True
+    records[-1]['accepted'] = True
     rewrite(records)
     check('ledger-prose-cannot-claim-acceptance', False, lambda: ledger.audit(root, repo), 'ledger-guards')
     ledger_path.write_bytes(saved_ledger)
     records = ledger.read(root)
-    records[1]['executed'] = False
+    records[-1]['executed'] = False
     rewrite(records)
     check('ledger-unexecuted-recorded-result', False, lambda: ledger.audit(root, repo), 'ledger-guards')
     ledger_path.write_bytes(saved_ledger)
     records = ledger.read(root)
-    del records[1]['outputs']['ARTIFACT.md']
+    del records[-1]['outputs']['ARTIFACT.md']
     rewrite(records)
     check('ledger-missing-output-hash', False, lambda: ledger.audit(root, repo), 'ledger-integrity')
     ledger_path.write_bytes(saved_ledger)
     records = ledger.read(root)
-    records[1]['guards'][0]['ok'] = False
-    records[1]['recorded'] = False
+    records[-1]['guards'][0]['ok'] = False
+    records[-1]['recorded'] = False
     rewrite(records)
     check('ledger-same-version-recomputes', False, lambda: ledger.audit(root, repo), 'ledger-guards')
     ledger_path.write_bytes(saved_ledger)
@@ -245,6 +245,8 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     host('1', pr='legacy')
     legacy = root_for('legacy')
     rows = ledger.read(legacy)
+    rows[0]['inputs'] = rows[1]['inputs']
+    rows.pop(1)
     rows[0].pop('mode')
     rows[0]['skill_sha256'] = 'old-version'
     rows[1].pop('recorded')
@@ -322,7 +324,7 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
             rows[0]['base_sha'] = h1
         else:
             (binding_root / 'round-0001' / name).write_bytes(content)
-            rows[0]['inputs'][name] = digest(content)
+            rows[1]['inputs'][name] = digest(content)
         (binding_root / 'ledger.jsonl').unlink()
         for row in rows:
             ledger.append(binding_root, row)
@@ -438,10 +440,10 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     invalid_env = dict(prenv, REVIEW_TIMEOUT='invalid')
     consumer(66, invalid_env)
     repeated_invalid = consumer(66, invalid_env)
-    check('unchanged-preflight-failure-does-not-consume-another-attempt', True,
+    check('invalid-preflight-does-not-reserve-an-attempt', True,
           lambda: repeated_invalid.returncode == 5
-          and len(ledger.read(Path(cmd(SCRIPTS / 'review-round.sh', 'path', mirror, h2, '66',
-                                     env=prenv).stdout.strip()))) == 2)
+          and not ledger.read(Path(cmd(SCRIPTS / 'review-round.sh', 'path', mirror, h2, '66',
+                                       env=prenv).stdout.strip())))
     for number, key in enumerate(['REVIEW_REQUIREMENTS', 'REVIEW_ROUTED', 'REVIEW_CATALOG',
                                   'REVIEW_SUITE_STATUS', 'REVIEW_TOOL_NOTES', 'REVIEW_CODEX_MODEL'], 50):
         consumer(number)
@@ -476,9 +478,9 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
           lambda: status.returncode == 0 and 'NOT_REVIEWED' in status.stdout and not unseen_artifacts.exists())
     bad_executor = cmd(SCRIPTS / 'review-round.sh', '1', repo, h1, 'invalid-executor', base,
                        'not-an-executor', env=env)
-    check('invalid-executor-was-not-executed', True,
+    check('invalid-executor-has-no-reservation', True,
           lambda: bad_executor.returncode == 5
-          and ledger.read(root_for('invalid-executor'))[-1]['executed'] is False)
+          and not ledger.read(root_for('invalid-executor')))
     fresh_status = consumer(58, dict(prenv, REVIEW_TOOL_NOTES='transport repaired'), phase='status')
     stale_status = consumer(58, phase='status')
     check('status-distinguishes-fresh-and-stale-inputs', True,
@@ -502,10 +504,14 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     # freshness. This fake CLI emits fixture events; it never invokes a model.
     fake_codex = fakebin / 'codex'
     fake_codex.write_text('#!' + sys.executable + '\n' + '''
-import json, os, subprocess, sys, time
+import json, os, signal, subprocess, sys, time
 from pathlib import Path
 mode = os.environ.get('TEST_EXECUTOR_MODE', '')
-if mode == 'wait':
+if mode == 'exit1':
+    sys.exit(1)
+elif mode == 'sigkill':
+    os.kill(os.getpid(), signal.SIGKILL)
+elif mode == 'wait':
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     Path(os.environ['TEST_READY']).write_text(json.dumps([os.getpid(), child.pid, os.getcwd()]))
     time.sleep(60)
@@ -525,6 +531,15 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
     fake_codex.chmod(0o755)
     liveenv = dict(prenv, TEST_EVENTS=str(t / 'events'), TEST_REPO=str(repo), TEST_NEXT_HEAD=special)
     events(t / 'events', original)
+    for label, mode, raw_exit in [('child-exit-one', 'exit1', '1'),
+                                   ('child-signal-nine', 'sigkill', '-9')]:
+        result = cmd(SCRIPTS / 'review-round.sh', '1', repo, h1, label, base, 'codex',
+                     env=dict(liveenv, TEST_EXECUTOR_MODE=mode))
+        child_root = root_for(label)
+        check(label + '-keeps-raw-child-cause-and-host-five', True,
+              lambda: result.returncode == 5
+              and (child_root / 'round-0001/executor-exit.txt').read_text().strip() == raw_exit
+              and not ledger.audit(child_root, repo)[1][1]['recorded'])
     git(repo, 'branch', 'moving', h1)
     moved = cmd(SCRIPTS / 'review-round.sh', '1', repo, 'moving', 'moving-head', base, 'codex',
                 env=dict(liveenv, TEST_EXECUTOR_MODE='head'))
@@ -580,7 +595,7 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
             stdout, stderr = proc.communicate(timeout=20)
             rows = ledger.read(root_for(label))
             check(label + '-records-one-failure-and-cleans-children', True,
-                  lambda: proc.returncode == 5 and len(rows) == 2 and rows[-1]['executed']
+                  lambda: proc.returncode == 5 and len(rows) == 3 and rows[-1]['executed']
                   and not rows[-1]['recorded'] and stopped(parent_pid) and stopped(child_pid)
                   and not Path(checkout).exists())
             after_status = cmd(SCRIPTS / 'review-round.sh', 'status', repo, h1, label, base, 'codex', env=runenv)
@@ -634,7 +649,7 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
         result = runner.main(['1', str(repo), h1, 'missing-check', base, 'stub'])
     rows = ledger.read(root_for('missing-check'))
     check('harness-exception-closes-attempt-once', True,
-          lambda: result == 5 and len(rows) == 2 and rows[-1]['executed'] and not rows[-1]['recorded'])
+          lambda: result == 5 and len(rows) == 3 and rows[-1]['executed'] and not rows[-1]['recorded'])
     (t / 'events').write_text('{"type":"result","subtype":"error_during_execution","is_error":true}\n')
     check('executor-error-result-rejected', True,
           lambda: cmd(sys.executable, SCRIPTS / 'lib/events.py', 'completed', t / 'events').returncode != 0)

@@ -124,9 +124,9 @@ with tempfile.TemporaryDirectory(prefix='review-copy-test-') as temporary:
     if marker.returncode == 10:
         rows = ledger.read(root)
         rows[0]['skill_sha256'] = 'older-protocol'
-        rows[1]['guards'].append({'guard': 'guard_seal_unseen', 'ok': False,
+        rows[-1]['guards'].append({'guard': 'guard_seal_unseen', 'ok': False,
                                   'reason': 'historical marker-only refusal'})
-        rows[1]['recorded'] = False
+        rows[-1]['recorded'] = False
         (root / 'ledger.jsonl').unlink()
         for row in rows:
             ledger.append(root, row)
