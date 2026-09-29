@@ -239,7 +239,7 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     ledger_path.write_bytes(saved_ledger)
     check('recorded-checkout-failure-is-not-forgotten', True,
           lambda: not ledger.evidence_available([{'guard': 'target', 'ok': True}],
-              {'executed': True, 'guards': [{'guard': 'checkout', 'ok': False}]}))
+              {'executed': True, 'guards': [{'guard': 'checkout', 'ok': False}]}, {}))
     # Legacy rejections stay rejections; prose-format faults no longer erase their evidence.
     events(t / 'events', original)
     host('1', pr='legacy')

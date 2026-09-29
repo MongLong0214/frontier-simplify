@@ -120,10 +120,34 @@ def recompute(repo, directory, start, checkout=None):
     return checks
 
 
-def evidence_available(checks, end):
+def observations_state(start, end):
+    version = start.get('checkout_checks_version')
+    if version is None or not end.get('executed'):
+        return 'NOT_OBSERVED'
+    require(version == 1, 'ledger-observations', 'unknown checkout observation version')
+    observed = end.get('checkout_observations')
+    require(isinstance(observed, dict) and set(observed) == {'head', 'tracked', 'input_copies'},
+            'ledger-observations', 'declared checkout observations are missing or incomplete')
+    states = []
+    for name in ('head', 'tracked', 'input_copies'):
+        item = observed[name]
+        require(isinstance(item, dict) and item.get('status') in {'unchanged', 'changed', 'error'},
+                'ledger-observations', f'{name} has an unknown observation status')
+        require(item['status'] == 'unchanged' or bool(item.get('reason')),
+                'ledger-observations', f'{name} failure has no reason')
+        if name == 'head' and item['status'] == 'unchanged':
+            require(item.get('observed_sha') == start['head_sha'], 'ledger-observations',
+                    'unchanged HEAD observation does not match the sealed target')
+        states.append(item['status'])
+    return 'ERROR' if 'error' in states else 'CHANGED' if 'changed' in states else 'UNCHANGED'
+
+
+def evidence_available(checks, end, start):
     # A removed checkout cannot be inspected again. Preserve its recorded head failure.
-    return bool(end.get('executed')) and not (end.get('reason') and not end.get('guards')) and all(c['ok'] for c in checks) and all(
-        c['ok'] for c in end.get('guards', []) if c['guard'] == 'checkout')
+    return (bool(end.get('executed')) and not (end.get('reason') and not end.get('guards'))
+            and observations_state(start, end) in {'UNCHANGED', 'NOT_OBSERVED'}
+            and all(c['ok'] for c in checks) and all(
+                c['ok'] for c in end.get('guards', []) if c['guard'] == 'checkout'))
 
 
 def running(root):
@@ -149,7 +173,7 @@ def status(root, repo, head, base=None, context=None):
         return
     n = max(starts)
     start, end = starts[n], ends.get(n, {})
-    available = (evidence_available(recompute(repo, root / f'round-{n:04}', start), end)
+    available = (evidence_available(recompute(repo, root / f'round-{n:04}', start), end, start)
                  and bool(end.get('recorded', end.get('accepted')))) if end else False
     state = 'INTERRUPTED' if not end else 'RECORDED' if available else 'FAILED'
     same = (start['head_sha'] == head and (base is None or start.get('base_sha') == base)
@@ -158,6 +182,8 @@ def status(root, repo, head, base=None, context=None):
     print(f'{state} {freshness}: reviewed head {start["head_sha"]}; requested head {head}; '
           f'{n}/{MAX_ROUNDS} attempts' + ('; HANDOFF' if n >= MAX_ROUNDS else ''))
     print(f'Artifact: {root / f"round-{n:04}" / "ARTIFACT.md"}')
+    if end:
+        print('Checkout observations: ' + observations_state(start, end))
     if end.get('freshness_reason') or end.get('reason'):
         print(end.get('freshness_reason') or end['reason'])
 
@@ -198,19 +224,21 @@ def audit(root, repo, progress=False):
         if not end:
             continue
         verify_hashes(d, end['outputs'])
+        observed_state = observations_state(start, end)
         if not end['executed'] or (end.get('reason') and not end.get('guards')):
             continue
         mandatory = {'ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt'}
         require(mandatory <= end['outputs'].keys(), 'ledger-integrity', 'required output digest missing')
         fresh = prose_mode(start)
         result_key = 'recorded' if fresh else 'accepted'
-        require(end[result_key] == all(c['ok'] for c in end['guards']),
+        require(end[result_key] == (all(c['ok'] for c in end['guards'])
+                                    and observed_state in {'UNCHANGED', 'NOT_OBSERVED'}),
                 'ledger-guards', 'receipt result contradicts its recorded checks')
         require(not fresh or not end.get('accepted'), 'ledger-guards', 'a prose review cannot claim merge acceptance')
         checks = recompute(repo, d, start)
         if fresh and start.get('skill_sha256') == protocol_sha256(SCRIPTS):
             require(checks == end['guards'], 'ledger-guards', 'receipt checks differ from recomputation')
-        usable = evidence_available(checks, end)
+        usable = evidence_available(checks, end, start)
         if start['phase'] == 2 and start.get('inventory_sha256'):
             require(originals, 'ledger-handoff', 'no earlier original review')
             original = originals[-1]
@@ -261,6 +289,10 @@ def report(root, repo):
         else:
             outcome = 'LEGACY_ACCEPTED' if e.get('accepted') else 'LEGACY_REJECTED' if e else 'INTERRUPTED'
         print(n, s['phase'], s['head_sha'], outcome, root / f'round-{n:04}' / 'ARTIFACT.md')
+        print('  checkout observations: ' + observations_state(s, e))
+        for name, item in e.get('checkout_observations', {}).items():
+            if item.get('status') != 'unchanged':
+                print(f"  {name}: {item['status']} ({item.get('reason', 'unknown reason')})")
         print('  protocol SHA-256 at start: ' + s.get('skill_sha256',
               s.get('context', {}).get('protocol_sha256', 'unknown')))
         freshness = {True: 'FRESH', False: 'STALE'}.get(e.get('fresh_at_finish'), 'UNKNOWN')

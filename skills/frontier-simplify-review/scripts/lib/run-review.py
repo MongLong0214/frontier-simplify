@@ -49,6 +49,66 @@ def copy_input(source, directory, name):
         require(False, 'input-collision', f'repository already contains {name}')
 
 
+def observe_checkout(clone, head, directory, installed, expected_hashes):
+    """Measure only the owned primary checkout, before it is removed."""
+    if clone.is_symlink() or not clone.is_dir():
+        return {name: {'status': 'error', 'reason': 'primary checkout is unavailable'}
+                for name in ('head', 'tracked', 'input_copies')}
+    observations = {}
+    try:
+        result = run(['git', '-C', clone, 'rev-parse', '--verify', 'HEAD^{commit}'])
+        if result.returncode:
+            observations['head'] = {'status': 'error', 'reason': f'HEAD check exited {result.returncode}'}
+        else:
+            actual = result.stdout.decode().strip()
+            observations['head'] = ({'status': 'unchanged', 'observed_sha': actual} if actual == head
+                                    else {'status': 'changed', 'observed_sha': actual,
+                                          'reason': 'checkout HEAD differs from the sealed head'})
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        observations['head'] = {'status': 'error', 'reason': type(error).__name__}
+
+    checks = [('index', ['git', '-C', clone, 'diff', '--cached', '--quiet', '--no-ext-diff',
+                         '--no-textconv', '--no-renames', 'HEAD', '--']),
+              ('worktree', ['git', '-C', clone, 'diff', '--quiet', '--no-ext-diff',
+                            '--no-textconv', '--no-renames', '--'])]
+    observations['tracked'] = {'status': 'unchanged'}
+    for label, command in checks:
+        try:
+            result = run(command)
+            if result.returncode == 1:
+                observations['tracked'] = {'status': 'changed', 'reason': f'tracked {label} differs'}
+                break
+            if result.returncode:
+                observations['tracked'] = {'status': 'error',
+                                           'reason': f'tracked {label} check exited {result.returncode}'}
+                break
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            observations['tracked'] = {'status': 'error', 'reason': type(error).__name__}
+            break
+
+    observations['input_copies'] = {'status': 'unchanged'}
+    if not clone.is_dir():
+        observations['input_copies'] = {'status': 'error', 'reason': 'primary checkout is unavailable'}
+    else:
+        for name in installed:
+            source, target = directory / name, clone / name
+            try:
+                if target.is_symlink() or not target.is_file():
+                    observations['input_copies'] = {'status': 'changed', 'reason': f'{name} is missing or not regular'}
+                    break
+                expected = source.read_bytes()
+                if digest(expected) != expected_hashes[name]:
+                    observations['input_copies'] = {'status': 'error', 'reason': f'{name} host input changed'}
+                    break
+                if target.stat().st_size != len(expected) or target.read_bytes() != expected:
+                    observations['input_copies'] = {'status': 'changed', 'reason': f'{name} bytes changed'}
+                    break
+            except (OSError, ValueError, KeyError) as error:
+                observations['input_copies'] = {'status': 'error', 'reason': f'{name}: {type(error).__name__}'}
+                break
+    return observations
+
+
 def main(argv=None, freshness_check=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('phase', choices=['1', '2', 'auto', 'status', 'report', 'path', 'hunks'])
@@ -142,7 +202,7 @@ def main(argv=None, freshness_check=None):
                 return FAILED
             available = (bool(end.get('recorded', end.get('accepted')))
                          and ledger.evidence_available(ledger.recompute(
-                             repo, root / f"round-{latest['round']:04}", latest), end))
+                             repo, root / f"round-{latest['round']:04}", latest), end, latest))
             return review_exit(available and end.get('fresh_at_finish', True), len(starts))
         n = len(starts) + 1
         d = root / f'round-{n:04}'
@@ -150,11 +210,12 @@ def main(argv=None, freshness_check=None):
         start = {'event': 'started', 'round': n, 'phase': phase, 'head_sha': head,
                  'base_sha': base, 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE,
                  'inputs': {}, 'context': context, 'executor': executor,
-                 'skill_sha256': context['protocol_sha256']}
+                 'skill_sha256': context['protocol_sha256'], 'checkout_checks_version': 1}
         started = False
         executed = False
         finished = False
         clone = None
+        installed = []
         child = None
         old_handlers = {}
         def interrupted(signum, frame):
@@ -178,7 +239,7 @@ def main(argv=None, freshness_check=None):
                 prior = next(k for k in reversed(starts) if k >= originals[-1][0]
                              and ends.get(k, {}).get('executed')
                              and ledger.evidence_available(ledger.recompute(
-                                 repo, root / f'round-{k:04}', starts[k]), ends[k]))
+                                 repo, root / f'round-{k:04}', starts[k]), ends[k], starts[k]))
                 previous_bytes = (root / f'round-{prior:04}' / 'ARTIFACT.md').read_bytes()
                 start.update(round1_head_sha=r1head, inventory_sha256=digest(inventory_bytes),
                              previous_round=prior)
@@ -245,6 +306,7 @@ def main(argv=None, freshness_check=None):
                 if name in {'SEAL.txt', 'inventory.txt', 'prompt.txt'}:
                     continue
                 copy_input(d / name, clone, name)
+                installed.append(name)
             executor = start['executor']
             env = {k: v for k, v in child_environment().items() if not k.startswith('REVIEW_')}
             # Name the model, not only the executor. `executor codex` while REVIEW_CODEX_MODEL
@@ -296,11 +358,13 @@ def main(argv=None, freshness_check=None):
                             pass
                         child.wait()
             (d / 'executor-exit.txt').write_text(str(rc))
-            (d / 'checkout-head.txt').write_bytes(git(clone, 'rev-parse', 'HEAD'))
+            observations = observe_checkout(clone, head, d, installed, start['inputs'])
+            (d / 'checkout-head.txt').write_text(observations['head'].get('observed_sha', '') + '\n')
             artifact = run([sys.executable, SCRIPTS / 'lib/extract.py', d / 'events.jsonl', '--final'])
             freeze(d / 'ARTIFACT.md', artifact.stdout)
             checks = ledger.recompute(repo, d, start, clone)
-            recorded = all(c['ok'] for c in checks)
+            recorded = all(c['ok'] for c in checks) and ledger.observations_state(start, {
+                'executed': True, 'checkout_observations': observations}) == 'UNCHANGED'
             fresh, freshness_reason = True, ''
             try:
                 check_freshness()
@@ -308,7 +372,7 @@ def main(argv=None, freshness_check=None):
                 fresh, freshness_reason = False, str(e).replace('\n', '; ')
             end = {'event': 'finished', 'round': n, 'executed': True, 'recorded': recorded,
                    'fresh_at_finish': fresh, 'freshness_reason': freshness_reason,
-                   'guards': checks,
+                   'guards': checks, 'checkout_observations': observations,
                    'inventory_sha256': digest(artifact.stdout) if phase == 1 else start['inventory_sha256'],
                    'outputs': ledger.hashes(d, ['ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt'])}
             ledger.append(root, end)
@@ -340,11 +404,15 @@ def main(argv=None, freshness_check=None):
             if not started:
                 print(reason, file=sys.stderr)
                 return FAILED
+            observations = (observe_checkout(clone, head, d, installed, start['inputs'])
+                            if executed else None)
             output_names = [name for name in ['ARTIFACT.md', 'events.jsonl', 'executor.err',
                             'executor-exit.txt', 'checkout-head.txt'] if (d / name).is_file()]
-            ledger.append(root, {'event': 'finished', 'round': n, 'executed': executed,
-                                 'recorded': False, 'reason': reason,
-                                 'outputs': ledger.hashes(d, output_names)})
+            end = {'event': 'finished', 'round': n, 'executed': executed,
+                   'recorded': False, 'reason': reason, 'outputs': ledger.hashes(d, output_names)}
+            if executed:
+                end['checkout_observations'] = observations
+            ledger.append(root, end)
             print(reason, file=sys.stderr)
             if n == MAX_ROUNDS:
                 ledger.handoff(root, repo, head)
@@ -353,7 +421,10 @@ def main(argv=None, freshness_check=None):
             for sig, handler in old_handlers.items():
                 signal.signal(sig, handler)
             if clone:
-                shutil.rmtree(clone)
+                if clone.is_symlink():
+                    clone.unlink()
+                elif clone.exists():
+                    shutil.rmtree(clone)
 
 
 if __name__ == '__main__':
