@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from protocol import digest, git, require, Rejected, review_context, artifact_root
+from protocol import digest, git, require, Rejected, review_context, artifact_root, child_environment
 import catalog
 import ledger
 
@@ -43,7 +43,8 @@ def main():
         return 0
     def metadata_for_pr():
         data = json.loads(subprocess.check_output(['gh', 'pr', 'view', str(a.pr), '--json',
-                         'number,headRefOid,baseRefOid,url'], cwd=repo, timeout=30))
+                         'number,headRefOid,baseRefOid,url'], cwd=repo, timeout=30,
+                         env=child_environment()))
         require(data['number'] == a.pr, 'consumer', 'PR metadata identity mismatch')
         return data
     metadata = metadata_for_pr()
@@ -75,10 +76,11 @@ def main():
         except BlockingIOError:
             raise Rejected('review-pr: repository fetch already running; try status shortly')
         if not mirror.exists():
-            subprocess.run(['git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', str(repo), str(mirror)], check=True)
-            subprocess.run(['git', '-C', str(mirror), 'remote', 'set-url', 'origin', origin], check=True)
+            subprocess.run(['git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', str(repo), str(mirror)],
+                           env=child_environment(), check=True)
+            git(mirror, 'remote', 'set-url', 'origin', origin)
         # Exact SHAs, not mutable branch names. No push, comments, or merge mutation.
-        subprocess.run(['git', '-C', str(mirror), 'fetch', '--quiet', 'origin', head, target], check=True)
+        git(mirror, 'fetch', '--quiet', 'origin', head, target)
         base = git(mirror, 'merge-base', target, head).decode().strip()
         (host / f'pr-{a.pr}.json').write_text(json.dumps(metadata, indent=2) + '\n')
     # The mirror is a --no-checkout object store: its working tree is empty and its index still

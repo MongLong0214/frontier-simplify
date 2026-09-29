@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown, artifact_root,
-                      review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS)
+                      review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS, child_environment)
 import ledger
 
 SCRIPTS = Path(__file__).resolve().parent.parent
@@ -20,7 +20,8 @@ SKILL = SCRIPTS.parent / 'SKILL.md'
 
 
 def run(args, cwd=None, stdout=subprocess.PIPE):
-    return subprocess.run(list(map(str, args)), cwd=cwd, stdout=stdout, stderr=subprocess.PIPE)
+    return subprocess.run(list(map(str, args)), cwd=cwd, stdout=stdout,
+                          stderr=subprocess.PIPE, env=child_environment())
 
 
 def root_for(repo, pr):
@@ -180,7 +181,7 @@ def main(argv=None, freshness_check=None):
                 freeze(d / 'IMPLEMENTER_RESPONSE.md', response if response is not None else
                        b'No implementer response supplied. Inspect the complete remediation diff.\n')
                 inputs.append('IMPLEMENTER_RESPONSE.md')
-                freeze(d / 'REMEDIATION.patch', git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', r1head, head))
+                freeze(d / 'REMEDIATION.patch', git(repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', r1head, head))
                 freeze(d / 'REMEDIATION_CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', r1head, head))
                 freeze(d / 'REMEDIATION_HUNKS.md', hunk_markdown(hunks(repo, r1head, head)).encode())
                 inputs += ['REMEDIATION.patch', 'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md']
@@ -189,7 +190,7 @@ def main(argv=None, freshness_check=None):
             with (d / 'SEAL.txt').open('a') as seal_file:
                 seal_file.write(f'protocol_sha256: {start["skill_sha256"]}\n')
             inputs += ['SEAL.txt', 'inventory.txt']
-            freeze(d / 'DIFF.patch', git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head))
+            freeze(d / 'DIFF.patch', git(repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head))
             freeze(d / 'CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', base, head))
             inputs += ['DIFF.patch', 'CHANGED.txt']
             values = {'REPOSITORY': os.environ.get('REVIEW_REPOSITORY_NAME') or str(repo), 'BASE_SHA': base,
@@ -234,7 +235,7 @@ def main(argv=None, freshness_check=None):
             ledger.shell_guard('guard_no_seal_in_tree', clone)
             executor = start['executor']
             prompt = (d / 'prompt.txt').read_text()
-            env = {k: v for k, v in os.environ.items() if not k.startswith('REVIEW_')}
+            env = {k: v for k, v in child_environment().items() if not k.startswith('REVIEW_')}
             # Name the model, not only the executor. `executor codex` while REVIEW_CODEX_MODEL
             # selects another model reads as though the swap did not apply, and the swap is the
             # protocol's own remedy for a round that cannot close its artifact -- a consumer had

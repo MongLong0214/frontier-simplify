@@ -100,10 +100,10 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
             return e
         return None
     check('missing-guard-is-a-harness-error', True,
-          lambda: isinstance(_raised(lambda: ledger.shell_guard('guard_that_does_not_exist', '/tmp')),
+          lambda: isinstance(_raised(lambda: ledger.shell_guard('guard_that_does_not_exist', repo)),
                              ledger.MissingGuard))
     check('present-guard-still-judges', True,
-          lambda: _raised(lambda: ledger.shell_guard('guard_no_seal_in_tree', '/tmp')) is None)
+          lambda: _raised(lambda: ledger.shell_guard('guard_no_seal_in_tree', repo)) is None)
     check('prose-recorded-without-inventory-envelope', True, lambda: r1.returncode == 10 and ledger.audit(root, repo)[1][1]['recorded'])
     check('prose-recorded-is-never-merge-success', True, lambda: r1.returncode != 0)
     check('original-bytes-preserved', True, lambda: (root / 'round-0001/ARTIFACT.md').read_bytes() == original.encode())
