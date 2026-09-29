@@ -215,11 +215,16 @@ for row in [{'type':'item.completed','item':{'type':'command_execution','command
 ''')
         fake.chmod(0o755)
         artifacts = root / 'integration-artifacts'
-        catalog = 'lead-' * 53000
+        # Keep each host environment value below Linux's per-string exec limit while
+        # composing a prompt larger than 256 KiB from ordinary independent inputs.
+        catalog = 'lead-' * 19000
+        requirements = 'requirement-' * 8500
+        routed = 'routed-' * 14000
         def review(phase, head, start, kind):
             log = root / ('observed-' + phase + '.json')
             env = dict(self.env, PATH=str(fakebin) + os.pathsep + self.env['PATH'],
                        REVIEW_ARTIFACTS=str(artifacts), REVIEW_CATALOG=catalog,
+                       REVIEW_REQUIREMENTS=requirements, REVIEW_ROUTED=routed,
                        TEST_FROM=start, TEST_TO=head, TEST_BASE=self.base,
                        TEST_KIND=kind, TEST_LOG=str(log),
                        GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='color.ui',
