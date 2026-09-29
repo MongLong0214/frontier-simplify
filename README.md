@@ -151,6 +151,13 @@ means failed or stale evidence. None means approval. Three attempts bound automa
 they do not guarantee correct review, closed defects or a safe merge. Provider-side model revisions
 and unexposed executor defaults cannot be fingerprinted and remain unknown.
 
+Help and read-only commands return **0**; invalid command syntax returns **2**. A valid target
+reserves an attempt before preparing inputs, so a later failure consumes it. Legacy histories remain
+readable even when they exceed three attempts, but cannot launch another review. Prompt values are
+rendered once, then the frozen prompt is sent through finite stdin; this removes argv limits without
+promising unlimited input or hiding a CLI rejection. See the [runner guide](skills/frontier-simplify-review/README.md)
+for v3 history, Git scope and rollback limits.
+
 The runner needs Bash, Git and Python 3.9+; PR discovery also needs authenticated `gh`, and live
 reviews need Codex or Claude Code. Full offline tests and optional Node witness replay need Node 22+.
 
