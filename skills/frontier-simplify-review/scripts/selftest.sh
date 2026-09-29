@@ -68,36 +68,11 @@ ck turn-completed-present  ok   guard_turn_completed "$T/good.jsonl"
 ck cmds-zero-rejected      fail guard_cmds_nonzero  "$T/nocmds.jsonl"
 ck cmds-nonzero-accepted   ok   guard_cmds_nonzero  "$T/good.jsonl"
 
-# --- guard 3: the seal must stay out of the reviewer's reach -----------------------------
-mkdir -p "$T/wt/sub"
-ck seal-absent-from-tree   ok   guard_no_seal_in_tree "$T/wt"
-touch "$T/wt/sub/SEAL.txt"
-ck seal-leaked-into-tree   fail guard_no_seal_in_tree "$T/wt"
-rm "$T/wt/sub/SEAL.txt"
-
-printf '{"type":"item.completed","item":{"type":"command_execution","command":"cat ../artifacts/x/SEAL.txt"}}\n' > "$T/sawseal-cmd.jsonl"
-printf '{"type":"item.completed","item":{"type":"command_execution","command":"ls -la ..","aggregated_output":"schema: frontier-simplify-review-seal.v1\\ntarget_sha256: abc"}}\n' > "$T/sawseal-out.jsonl"
-ck seal-read-by-command    fail guard_seal_unseen "$T/sawseal-cmd.jsonl" "$T/s"
-ck seal-leaked-in-output   fail guard_seal_unseen "$T/sawseal-out.jsonl" "$T/s"
-ck seal-never-reached      ok   guard_seal_unseen "$T/good.jsonl" "$T/s"
-
-# The bare filename appearing in text about SOME OTHER seal is not disclosure of this one.
-# A real round was rejected because `ps aux` printed a sibling session's prompt whose text
-# mentioned SEAL.txt; nothing about that review's own seal was disclosed. A guard that
-# rejects a sound review for an unrelated string is a guard somebody switches off.
-printf '{"type":"item.completed","item":{"type":"command_execution","command":"ps aux","aggregated_output":"claude -p ... guards: turn.completed, cmds==0, SEAL.txt existence ..."}}\n{"type":"turn.completed"}\n' > "$T/foreign.jsonl"
-ck seal-word-in-foreign-text ok guard_seal_unseen "$T/foreign.jsonl" "$T/s"
-printf '{"type":"item.completed","item":{"type":"command_execution","command":"cat x","aggregated_output":"schema: frontier-simplify-review-seal.v1"}}\n{"type":"turn.completed"}\n' > "$T/own-content.jsonl"
-ck seal-own-content-caught fail guard_seal_unseen "$T/own-content.jsonl" "$T/s"
-printf "{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"command\":\"cat $T/s/SEAL.txt\"}}\n{\"type\":\"turn.completed\"}\n" > "$T/own-path.jsonl"
-ck seal-own-path-caught    fail guard_seal_unseen "$T/own-path.jsonl" "$T/s"
-
 # Round 2 must run on a different executor than round 1, and the two do not share an event
 # vocabulary. Every guard that reads the stream is held to BOTH, so a claude round can never
 # be rejected for speaking claude.
 printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cat lib/x.mjs"}}]}}\n{"type":"result","subtype":"success"}\n' > "$T/cl-good.jsonl"
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}\n{"type":"result","subtype":"success"}\n' > "$T/cl-nocmds.jsonl"
-printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cat ../SEAL.txt"}}]}}\n{"type":"result"}\n' > "$T/cl-sawseal.jsonl"
 printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}\n' > "$T/cl-truncated.jsonl"
 # A transport that dropped and recovered is not an executor that failed. Measured: four reconnect
 # error frames mid-run, then `turn.completed` as the last event, exit 0, and a 58KB inventory --
@@ -113,10 +88,8 @@ ck claude-turn-completed   ok   guard_turn_completed "$T/cl-good.jsonl"
 ck claude-truncated        fail guard_turn_completed "$T/cl-truncated.jsonl"
 ck claude-cmds-nonzero     ok   guard_cmds_nonzero  "$T/cl-good.jsonl"
 ck claude-cmds-zero        fail guard_cmds_nonzero  "$T/cl-nocmds.jsonl"
-ck claude-seal-unseen      ok   guard_seal_unseen   "$T/cl-good.jsonl" "$T/s"
-ck claude-saw-seal         fail guard_seal_unseen   "$T/cl-sawseal.jsonl" "$T/s"
 
-# --- guard 4: seal <-> head cross-check ---------------------------------------------------
+# --- guard 3: seal <-> head cross-check ---------------------------------------------------
 git -C "$REPO" worktree add --detach "$T/rw" "$HEAD_SHA" >/dev/null 2>&1
 ck crosscheck-match        ok   guard_seal_head_crosscheck "$T/s" "$T/rw" "$HEAD_SHA"
 ck crosscheck-upstream-bad fail guard_seal_head_crosscheck "$T/s" "$T/rw" "$OTHER"

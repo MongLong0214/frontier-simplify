@@ -27,5 +27,7 @@ jobs:
         run: python3 -B skills/frontier-simplify-review/scripts/selftest-index.py
       - name: Finite prompt stdin
         run: python3 -B skills/frontier-simplify-review/scripts/selftest-stdin.py
+      - name: No-clobber review inputs
+        run: python3 -B skills/frontier-simplify-review/scripts/selftest-copy.py
       - name: Full offline selftest
         run: env -u REVIEW_SELFTEST_FAST bash skills/frontier-simplify-review/scripts/selftest.sh

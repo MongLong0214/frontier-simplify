@@ -14,7 +14,7 @@
 #
 # The seal is written OUTSIDE the reviewed worktree. A reviewer that can read the seal can
 # echo its values without reading anything, which is the failure this file exists to
-# prevent -- see guard_no_seal_in_tree in lib/guards.sh.
+# prevent. The host does not install this seal as a clone input.
 set -euo pipefail
 
 # The harness always names its repository with `git -C`. Inherited GIT_DIR / GIT_WORK_TREE
