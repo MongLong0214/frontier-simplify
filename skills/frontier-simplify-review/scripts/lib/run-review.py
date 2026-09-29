@@ -161,6 +161,9 @@ def main(argv=None, freshness_check=None):
                     f'another round is already running for this PR ({root}); wait for it rather '
                     'than starting a second one, which would write into its events stream')
         starts, ends, originals = ledger.audit(root, repo)
+        orphans = ledger.orphaned_rounds(root, starts)
+        require(not orphans, 'orphaned-preparation',
+                f'unledgered round path already exists: {orphans[0] if orphans else ""}')
         head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
         if len(starts) >= MAX_ROUNDS:
             ledger.handoff(root, repo, head)
@@ -242,7 +245,8 @@ def main(argv=None, freshness_check=None):
                              and ledger.evidence_available(ledger.recompute(
                                  repo, root / f'round-{k:04}', starts[k]), ends[k], starts[k]))
                 previous_bytes = (root / f'round-{prior:04}' / 'ARTIFACT.md').read_bytes()
-                start.update(round1_head_sha=r1head, inventory_sha256=digest(inventory_bytes),
+                start.update(original_round=originals[-1][0], round1_head_sha=r1head,
+                             inventory_sha256=digest(inventory_bytes),
                              previous_round=prior)
             scope = build_scope(repo, base if phase == 1 else r1head, head,
                                 'change' if phase == 1 else 'remediation')

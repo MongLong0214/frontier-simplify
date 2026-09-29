@@ -180,6 +180,46 @@ for row in [
                              (root('phase-one') / 'round-0001/ARTIFACT.md').read_bytes() and
                              (root('phase-one') / 'round-0002/IMPLEMENTER_RESPONSE.md').read_bytes() ==
                              response.read_bytes()))
+        phase_starts, _, _ = ledger.audit(root('phase-one'), repo)
+        results.append(check('phase2-reserves-exact-original-and-previous-round',
+                             phase_starts[2].get('original_round') == 1 and
+                             phase_starts[2].get('previous_round') == 1))
+        wrong_original = copied_history('wrong-original-round',
+                                        lambda rows: rows[3].update(original_round=99))
+        try:
+            ledger.audit(wrong_original, repo)
+        except Rejected as error:
+            wrong_refused = 'original' in str(error)
+        else:
+            wrong_refused = False
+        results.append(check('rehashed-original-round-substitution-refused', wrong_refused))
+        old_phase2 = copied_history('older-phase2-without-original-round',
+                                    lambda rows: rows[3].pop('original_round', None))
+        results.append(check('older-phase2-binding-remains-readable',
+                             bool(ledger.audit(old_phase2, repo)[2])))
+        later_response = t / 'later-response.txt'
+        later_response.write_text('Later evidence for the same repair.\n')
+        third, _ = host('phase-one', '2', repaired, head, 'remediation', later_response)
+        complete_starts, _, _ = ledger.audit(root('phase-one'), repo)
+        results.append(check('third-attempt-binds-latest-usable-review',
+                             third.returncode == 11 and complete_starts[3].get('previous_round') == 2))
+        rebound = t / 'rebound-previous-review'
+        shutil.copytree(root('phase-one'), rebound)
+        stale_previous = (rebound / 'round-0001/ARTIFACT.md').read_bytes()
+        (rebound / 'round-0003/PREVIOUS_REVIEW.md').write_bytes(stale_previous)
+        rows = ledger.read(rebound)
+        rows[6]['previous_round'] = 1
+        rows[7]['inputs']['PREVIOUS_REVIEW.md'] = digest(stale_previous)
+        (rebound / 'ledger.jsonl').unlink()
+        for row in rows:
+            ledger.append(rebound, row)
+        try:
+            ledger.audit(rebound, repo)
+        except Rejected as error:
+            rebound_refused = 'previous' in str(error)
+        else:
+            rebound_refused = False
+        results.append(check('rehashed-older-previous-review-substitution-refused', rebound_refused))
         response_start, response_log = host('response-only', '1', head, base, 'change')
         response_followup, response_followup_log = host('response-only', 'auto', head, head,
                                                         'remediation', response)

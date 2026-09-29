@@ -183,11 +183,24 @@ def running(root):
     return False
 
 
+def orphaned_rounds(root, starts):
+    """Find unledgered round paths without adopting or removing them."""
+    if not root.is_dir():
+        return []
+    return sorted(path for path in root.iterdir()
+                  if re.fullmatch(r'round-[0-9]{4,}', path.name)
+                  and int(path.name[6:]) not in starts)
+
+
 def status(root, repo, head, base=None, context=None):
     if running(root):
         print(f'RUNNING: {root}; requested head {head}')
         return
     starts, ends, _ = audit(root, repo)
+    orphans = orphaned_rounds(root, starts)
+    if orphans:
+        print('ORPHANED_PREPARATION: ' + ', '.join(map(str, orphans)) +
+              '; preserve the evidence and use human review')
     if not starts:
         print(f'NOT_REVIEWED: requested head {head}; 0/{MAX_ROUNDS} attempts')
         return
@@ -210,6 +223,7 @@ def status(root, repo, head, base=None, context=None):
 
 def audit(root, repo, progress=False):
     starts, prepared, ends, originals = {}, {}, {}, []
+    usable_rounds = []
     for e in read(root):
         n = e['round']
         if e['event'] == 'started':
@@ -243,6 +257,21 @@ def audit(root, repo, progress=False):
             start = dict(start, inputs=prepared[n]['inputs'])
             starts[n] = start
         verify_hashes(d, start['inputs'])
+        if start['phase'] == 2 and 'original_round' in start:
+            require(originals and type(start['original_round']) is int and
+                    start['original_round'] == originals[-1][0], 'ledger-handoff',
+                    'original review round substituted')
+            original = originals[-1]
+            require(start.get('round1_head_sha') == original[2]['head_sha'] and
+                    start['base_sha'] == original[2]['base_sha'] and
+                    start.get('inventory_sha256') == digest((original[1] / 'ARTIFACT.md').read_bytes()),
+                    'ledger-handoff', 'original review target or bytes substituted')
+            prior = start.get('previous_round')
+            require(type(prior) is int and prior < n and prior in ends and ends[prior].get('executed'),
+                    'ledger-handoff', 'previous review is not an earlier executed attempt')
+            require(prior == next((k for k in reversed(usable_rounds)
+                                   if k >= start['original_round']), None), 'ledger-handoff',
+                    'previous review does not name the latest usable attempt')
         end = ends.get(n)
         if not end:
             continue
@@ -281,6 +310,8 @@ def audit(root, repo, progress=False):
             # A historical rejected review can supply evidence; its acceptance stays false.
             # Neither the old nor the new outcome becomes merge authorization.
             originals.append((n, d, start, (d / 'ARTIFACT.md').read_text()))
+        if usable:
+            usable_rounds.append(n)
     return starts, ends, originals
 
 
@@ -303,6 +334,10 @@ def guard_rejections(ends):
 def report(root, repo):
     print('Checking stored review evidence; use status to check for an active run.', flush=True)
     starts, ends, originals = audit(root, repo, progress=True)
+    orphans = orphaned_rounds(root, starts)
+    if orphans:
+        print('ORPHANED_PREPARATION: ' + ', '.join(map(str, orphans)) +
+              '; preserve the evidence and use human review')
     print('Review evidence only; no row or exit status authorizes a merge.')
     print('attempt phase head outcome artifact')
     for n, s in starts.items():

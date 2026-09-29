@@ -103,6 +103,15 @@ with tempfile.TemporaryDirectory(prefix='review-ledger-test-') as temporary:
                          and syntax_result.returncode == 2))
     orphan = root('orphan')
     (orphan / 'round-0001').mkdir(parents=True)
+    orphan_status = host('orphan', phase='status')
+    orphan_report = host('orphan', phase='report')
+    results.append(check('orphan-status-and-report-show-problem-without-writing',
+                         orphan_status.returncode == 0 and orphan_report.returncode == 0
+                         and 'ORPHANED_PREPARATION' in orphan_status.stdout
+                         and 'ORPHANED_PREPARATION' in orphan_report.stdout
+                         and str(orphan / 'round-0001') in orphan_status.stdout
+                         and str(orphan / 'round-0001') in orphan_report.stdout
+                         and not (orphan / 'ledger.jsonl').exists() and not (orphan / '.lock').exists()))
     orphan_run = host('orphan')
     results.append(check('old-unledgered-directory-refused-without-write',
                          orphan_run.returncode == 5 and 'orphan' in orphan_run.stderr.lower()
