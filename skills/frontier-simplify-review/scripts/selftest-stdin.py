@@ -66,7 +66,7 @@ class RendererTests(unittest.TestCase):
                             'falsification', 'line location', 'UNAVAILABLE'):
             with self.subTest(instruction=instruction):
                 self.assertIn(instruction, prompt)
-        self.assertNotIn('SCOPE.json', prompt)
+        self.assertIn('SCOPE.json', prompt)
 
     def test_real_round2_prompt_carries_followup_guidance(self):
         skill = SCRIPTS.parent / 'SKILL.md'
@@ -87,7 +87,7 @@ class RendererTests(unittest.TestCase):
                             'ROUND1-ESCAPE', 'UNAVAILABLE'):
             with self.subTest(instruction=instruction):
                 self.assertIn(instruction, prompt)
-        self.assertNotIn('SCOPE.json', prompt)
+        self.assertIn('SCOPE.json', prompt)
 
 
 class ReviewStdinTests(unittest.TestCase):

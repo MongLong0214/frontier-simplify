@@ -124,6 +124,9 @@ Tool or platform notes: {{TOOL_NOTES_OR_NONE}}
 Your cwd is a disposable checkout of Reviewed head. DIFF.patch is Base..Reviewed-head;
 CHANGED.txt is Git's changed-file list. Verify the checkout and inspect that diff, the changed
 files, and directly affected callers, authorities, readers/writers, equivalents and test bodies.
+SCOPE.json is frozen metadata for Base commit..Reviewed head: paths, change kinds and optional
+implementation/test grouping hints. Read it to navigate, not as proof of coverage or a request
+for group-by-group PASS entries; the diff and code remain the evidence.
 Check the exact commit endpoints and full changed-file list first. For a deleted file, read the
 old side at Base. Inspect mode, type, binary and runtime Markdown changes for their actual
 behavior, or name the limit. File count and LOC do not establish safety. Read a local change
@@ -213,6 +216,8 @@ ROUND1_INVENTORY.md contains the exact original review, including any coverage l
 PREVIOUS_REVIEW.md contains the latest follow-up, or the original review on the first follow-up.
 IMPLEMENTER_RESPONSE.md contains the separate response, or a note that none was supplied.
 REMEDIATION.patch and REMEDIATION_CHANGED.txt cover Round-1-head..Remediation-head.
+SCOPE.json is frozen metadata for Round-1 head..Remediation head, possibly empty for a
+response-only follow-up. Its groups are navigation hints, not coverage certification.
 The host checked original bytes and ancestry. Verify your checkout is Remediation head.
 If integrity or the checkout is wrong, stop and report PROTOCOL_ERROR.
 Read the whole remediation diff from the original head, not only the latest commit. An empty
