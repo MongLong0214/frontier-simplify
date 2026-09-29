@@ -51,6 +51,23 @@ class RendererTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn(private.encode(), result.stderr)
 
+    def test_real_round1_prompt_carries_investigation_guidance(self):
+        self.skill = SCRIPTS.parent / 'SKILL.md'
+        values = {'REPOSITORY': '한글 {{BASE_SHA}} ```', 'BASE_SHA': 'base',
+                  'ROUND1_HEAD_SHA': 'head', 'ATTEMPT_NUMBER': '1', 'MAX_ROUNDS': '3',
+                  'REQUIREMENT_SOURCES_OR_NONE': 'none', 'KNOWN_ROUTED_OR_NONE': 'none',
+                  'PROJECT_CLASS_CATALOG_OR_NONE': 'none',
+                  'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none'}
+        result = self.render('--values-stdin', payload=json.dumps(values).encode())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prompt = result.stdout.decode()
+        self.assertIn(values['REPOSITORY'], prompt)
+        for instruction in ('deleted file', 'old side', 'direct authority', 'sibling',
+                            'falsification', 'line location', 'UNAVAILABLE'):
+            with self.subTest(instruction=instruction):
+                self.assertIn(instruction, prompt)
+        self.assertNotIn('SCOPE.json', prompt)
+
 
 class ReviewStdinTests(unittest.TestCase):
     def setUp(self):
