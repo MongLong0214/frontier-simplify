@@ -3,30 +3,36 @@
 import os
 from pathlib import Path
 import subprocess
-
-# Scrub the hook's OWN environment first, not only the child's. Git exports GIT_DIR and
-# GIT_INDEX_FILE into a hook, and every git command this file runs -- including the ones that read
-# the staged tree -- inherits them. Passing a cleaned env to one subprocess left this process
-# itself pointed at the outer index, and a commit that took a second by hand took minutes through
-# git. Measured both ways: 0s invoked directly, over 120s with GIT_DIR set.
-for _leaked in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR',
-                'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'):
-    os.environ.pop(_leaked, None)
 import sys
 import tarfile
 import tempfile
+from protocol import child_environment
 
 
-def git(repo, *args):
-    return subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.PIPE).decode().strip()
+def git(repo, *args, env=None):
+    return subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.PIPE,
+                                   env=child_environment() if env is None else env).decode().strip()
 
 
 def check(repo, trusted):
-    changed = subprocess.check_output(['git', '-C', str(repo), 'diff', '--cached', '--name-only', '-z'])
+    # Git's temporary index (including commit --only) belongs to the source, not the
+    # test checkout. Relative overrides are relative to the hook's actual cwd.
+    explicit = os.environ.get('GIT_INDEX_FILE')
+    if explicit is not None:
+        index = Path(os.path.abspath(explicit))
+        with index.open('rb'):
+            pass
+    else:
+        index = Path(git(repo, 'rev-parse', '--git-path', 'index'))
+        if not index.is_absolute():
+            index = repo / index
+    source_env = dict(child_environment(), GIT_INDEX_FILE=str(index))
+    changed = subprocess.check_output(['git', '-C', str(repo), 'diff', '--cached', '--name-only', '-z'],
+                                      env=source_env, stderr=subprocess.PIPE)
     if not any(p.startswith(b'skills/frontier-simplify-review/') for p in changed.split(b'\0')):
         return
     # The index tree is one Git snapshot; tests cannot validate unstaged replacement bytes.
-    tree = git(repo, 'write-tree')
+    tree = git(repo, 'write-tree', env=source_env)
     with tempfile.TemporaryDirectory(prefix='review-commit-') as tmp:
         tmp = Path(tmp).resolve()
         archive = tmp / 'index.tar'
@@ -34,7 +40,7 @@ def check(repo, trusted):
         # every commit -- benchmarks included -- to test a directory that is 276KB of it. The
         # snapshot is still one Git tree, so what the tests read is still exactly what is staged.
         subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', '-o', str(archive),
-                        tree, 'skills/frontier-simplify-review'], check=True)
+                        tree, 'skills/frontier-simplify-review'], env=child_environment(), check=True)
         staged = tmp / 'staged'
         staged.mkdir()
         with tarfile.open(archive) as tar:
@@ -47,7 +53,7 @@ def check(repo, trusted):
                     continue
                 tar.extract(member, staged)
         candidate = staged / 'skills/frontier-simplify-review/scripts'
-        env = dict(os.environ, REVIEW_TEST_SCRIPTS=str(candidate), PYTHONDONTWRITEBYTECODE='1')
+        env = dict(child_environment(), REVIEW_TEST_SCRIPTS=str(candidate), PYTHONDONTWRITEBYTECODE='1')
         env.pop('REVIEW_TEST_SKIP', None)
         # The hook runs the fast half. It ran the whole suite twice -- once for the
         # installed copy, once for the staged one -- and the suite grew from 34 cases to 164
@@ -56,15 +62,6 @@ def check(repo, trusted):
         # comments warn about. The slow half builds repositories and drives whole rounds;
         # it belongs where waiting costs nothing, and it says out loud that it skipped it.
         env['REVIEW_SELFTEST_FAST'] = '1'
-        # Git exports GIT_DIR, GIT_INDEX_FILE and friends into every hook, and they follow any git
-        # command the hook starts -- including the ones the suite runs inside the throwaway
-        # repository it builds to measure itself. Measured: with GIT_DIR set, `git worktree add`
-        # in the fixture lands somewhere else and the seal/head cross-check fails, so the gate
-        # blocked a commit and named a guard that had nothing to do with the change. A gate that
-        # reports the wrong reason is worse than one that stays quiet.
-        for leaked in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX',
-                       'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'):
-            env.pop(leaked, None)
         config = trusted / 'consumers.json'
         if config.exists():
             env['REVIEW_CONSUMERS_CONFIG'] = str(config)
@@ -77,10 +74,11 @@ def check(repo, trusted):
                 raise ValueError(f'{label} suite failed: {reason or (p.stderr.strip().splitlines() or ["see selftest.sh"])[-1]}')
         if config.exists():
             p = subprocess.run([sys.executable, str(trusted / 'scripts/lib/portability.py'),
-                                str(candidate.parent), str(config)], capture_output=True, text=True)
+                                str(candidate.parent), str(config)], capture_output=True, text=True,
+                               env=child_environment())
             if p.returncode:
                 raise ValueError(p.stderr.strip())
-        if git(repo, 'write-tree') != tree:
+        if git(repo, 'write-tree', env=source_env) != tree:
             raise ValueError('index changed during selftest; retry the commit')
     print('review-selftest: staged snapshot passed installed and staged suites')
 
