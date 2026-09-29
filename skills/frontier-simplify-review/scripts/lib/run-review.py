@@ -146,7 +146,6 @@ def main(argv=None, freshness_check=None):
             return review_exit(available and end.get('fresh_at_finish', True), len(starts))
         n = len(starts) + 1
         d = root / f'round-{n:04}'
-        d.mkdir()
         inputs = []
         start = {'event': 'started', 'round': n, 'phase': phase, 'head_sha': head,
                  'base_sha': base, 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE,
@@ -175,15 +174,23 @@ def main(argv=None, freshness_check=None):
                 r1head = original_start['head_sha']
                 require(run(['git', '-C', repo, 'merge-base', '--is-ancestor', r1head, head]).returncode == 0,
                         'ancestry', 'RESTART_ROUND_1: remediation does not descend from round 1')
-                start.update(round1_head_sha=r1head, inventory_sha256=digest((original_dir / 'ARTIFACT.md').read_bytes()))
-                copy_input(original_dir / 'ARTIFACT.md', d, 'ROUND1_INVENTORY.md')
-                inputs.append('ROUND1_INVENTORY.md')
+                inventory_bytes = (original_dir / 'ARTIFACT.md').read_bytes()
                 prior = next(k for k in reversed(starts) if k >= originals[-1][0]
                              and ends.get(k, {}).get('executed')
                              and ledger.evidence_available(ledger.recompute(
                                  repo, root / f'round-{k:04}', starts[k]), ends[k]))
-                start['previous_round'] = prior
-                copy_input(root / f'round-{prior:04}' / 'ARTIFACT.md', d, 'PREVIOUS_REVIEW.md')
+                previous_bytes = (root / f'round-{prior:04}' / 'ARTIFACT.md').read_bytes()
+                start.update(round1_head_sha=r1head, inventory_sha256=digest(inventory_bytes),
+                             previous_round=prior)
+            require(not d.exists() and not d.is_symlink(), 'orphaned-preparation',
+                    f'unledgered round directory already exists: {d}')
+            ledger.append(root, start)
+            started = True
+            d.mkdir()
+            if phase == 2:
+                freeze(d / 'ROUND1_INVENTORY.md', inventory_bytes)
+                inputs.append('ROUND1_INVENTORY.md')
+                freeze(d / 'PREVIOUS_REVIEW.md', previous_bytes)
                 inputs.append('PREVIOUS_REVIEW.md')
                 freeze(d / 'IMPLEMENTER_RESPONSE.md', response if response is not None else
                        b'No implementer response supplied. Inspect the complete remediation diff.\n')
@@ -216,9 +223,9 @@ def main(argv=None, freshness_check=None):
             require(rendered.returncode == 0, 'prompt', rendered.stderr.decode().strip())
             freeze(d / 'prompt.txt', rendered.stdout)
             inputs.append('prompt.txt')
-            start['inputs'] = ledger.hashes(d, inputs)
-            ledger.append(root, start)
-            started = True
+            prepared_inputs = ledger.hashes(d, inputs)
+            ledger.append(root, {'event': 'prepared', 'round': n, 'inputs': prepared_inputs})
+            start['inputs'] = prepared_inputs
             # Clone locally so consumer .git and its shared worktrees remain untouched.
             # A short base, deliberately. macOS puts $TMPDIR at ~49 characters before this
             # prefix, and a unix socket path is capped at 104 bytes by sun_path -- measured: a
@@ -331,8 +338,8 @@ def main(argv=None, freshness_check=None):
                 child.wait()
                 (d / 'executor-exit.txt').write_text(str(child.returncode))
             if not started:
-                start['inputs'] = ledger.hashes(d, inputs)
-                ledger.append(root, start)
+                print(reason, file=sys.stderr)
+                return FAILED
             output_names = [name for name in ['ARTIFACT.md', 'events.jsonl', 'executor.err',
                             'executor-exit.txt', 'checkout-head.txt'] if (d / name).is_file()]
             ledger.append(root, {'event': 'finished', 'round': n, 'executed': executed,
@@ -353,4 +360,5 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except (Rejected, OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
-        sys.exit(str(e).replace('\n', '; '))
+        print(str(e).replace('\n', '; '), file=sys.stderr)
+        sys.exit(FAILED)

@@ -10,7 +10,12 @@ from protocol import digest, protocol_sha256, require, Rejected, MAX_ROUNDS, chi
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
-MODE = 'prose-review-v2'
+MODE = 'prose-review-v3'
+PROSE_MODES = {'prose-review-v2', MODE}
+
+
+def prose_mode(start):
+    return start.get('mode') in PROSE_MODES
 
 
 def encode(value):
@@ -86,7 +91,7 @@ def recompute(repo, directory, start, checkout=None):
         if start['phase'] == 2:
             mandatory |= {'ROUND1_INVENTORY.md', 'IMPLEMENTER_RESPONSE.md', 'REMEDIATION.patch',
                           'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md'}
-            if start.get('mode') == MODE:
+            if prose_mode(start):
                 mandatory.add('PREVIOUS_REVIEW.md')
             require(digest((directory / 'ROUND1_INVENTORY.md').read_bytes()) == start['inventory_sha256'],
                     'inventory-integrity', 'original review copy differs from trusted digest')
@@ -98,7 +103,7 @@ def recompute(repo, directory, start, checkout=None):
     for name in ('guard_turn_completed', 'guard_cmds_nonzero'):
         check(name, lambda name=name: shell_guard(name, directory / 'events.jsonl'))
     def extracted():
-        marker = '--final' if start.get('mode') == MODE else (
+        marker = '--final' if prose_mode(start) else (
             '# Round 1 review inventory' if start['phase'] == 1 else '# Round 2 closure review')
         p = subprocess.run([sys.executable, str(HERE / 'extract.py'), str(directory / 'events.jsonl'), marker],
                            capture_output=True, env=child_environment())
@@ -158,23 +163,36 @@ def status(root, repo, head, base=None, context=None):
 
 
 def audit(root, repo, progress=False):
-    starts, ends, originals = {}, {}, []
+    starts, prepared, ends, originals = {}, {}, {}, []
     for e in read(root):
         n = e['round']
         if e['event'] == 'started':
             require(n == len(starts) + 1, 'ledger-rounds', 'round numbers were skipped or reset')
+            require(e.get('mode') in {None, *PROSE_MODES}, 'ledger-version', 'unknown receipt mode')
             starts[n] = e
+        elif e['event'] == 'prepared':
+            require(n in starts and n not in prepared and n not in ends and starts[n].get('mode') == MODE,
+                    'ledger-prepared', 'prepared must follow one v3 reservation before finish')
+            require(set(e) == {'event', 'round', 'inputs', 'previous_sha256', 'at'} and isinstance(e['inputs'], dict),
+                    'ledger-prepared', 'prepared may declare only input hashes')
+            prepared[n] = e
         else:
             require(e['event'] == 'finished' and n in starts and n not in ends,
                     'ledger-rounds', 'orphan or duplicate round result')
             require(e.get('executed') or not (e.get('accepted') or e.get('recorded')),
                     'ledger-guards', 'an unexecuted attempt cannot claim a recorded review')
+            require(not e.get('executed') or starts[n].get('mode') != MODE or n in prepared,
+                    'ledger-prepared', 'executed v3 attempt has no prepared input hashes')
             ends[n] = e
     for n, start in starts.items():
         if progress:
             print(f'review: checking stored evidence for attempt {n}/{len(starts)}',
                   file=sys.stderr, flush=True)
         d = root / f'round-{n:04}'
+        if n in prepared:
+            require(start['inputs'] == {}, 'ledger-prepared', 'v3 reservation changed its inputs before preparation')
+            start = dict(start, inputs=prepared[n]['inputs'])
+            starts[n] = start
         verify_hashes(d, start['inputs'])
         end = ends.get(n)
         if not end:
@@ -184,7 +202,7 @@ def audit(root, repo, progress=False):
             continue
         mandatory = {'ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt'}
         require(mandatory <= end['outputs'].keys(), 'ledger-integrity', 'required output digest missing')
-        fresh = start.get('mode') == MODE
+        fresh = prose_mode(start)
         result_key = 'recorded' if fresh else 'accepted'
         require(end[result_key] == all(c['ok'] for c in end['guards']),
                 'ledger-guards', 'receipt result contradicts its recorded checks')
@@ -238,7 +256,7 @@ def report(root, repo):
     print('attempt phase head outcome artifact')
     for n, s in starts.items():
         e = ends.get(n, {})
-        if s.get('mode') == MODE:
+        if prose_mode(s):
             outcome = 'RECORDED' if e.get('recorded') else 'FAILED' if e else 'INTERRUPTED'
         else:
             outcome = 'LEGACY_ACCEPTED' if e.get('accepted') else 'LEGACY_REJECTED' if e else 'INTERRUPTED'
