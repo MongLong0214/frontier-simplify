@@ -1,6 +1,6 @@
 {
   "name": "frontier-simplify",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Frontier-simplify for Fable and Astra (gpt-6-astra): cut invented process, preserve product work, and bound repeated code reviews.",
   "author": {
     "name": "MongLong0214",
