@@ -39,6 +39,8 @@ jobs:
         run: python3 -B skills/frontier-simplify-review/scripts/selftest-scope.py
       - name: Frozen scope runner input
         run: python3 -B skills/frontier-simplify-review/scripts/selftest-scope-runner.py
+      - name: Witnesses, redesign stops and supplementary budget
+        run: python3 -B skills/frontier-simplify-review/scripts/selftest-followup.py
       - name: Offline review cases
         run: python3 -B benchmarks/review/r21/generate.py --selftest
       - name: Full offline selftest

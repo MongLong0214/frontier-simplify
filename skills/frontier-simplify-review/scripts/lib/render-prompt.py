@@ -8,6 +8,7 @@ substitutes the placeholders.
 
   render-prompt.py SKILL.md 1 KEY=VALUE ...
   render-prompt.py SKILL.md 1 --values-stdin
+  render-prompt.py SKILL.md redesign --values-stdin
 """
 import json
 import re
@@ -47,12 +48,14 @@ try:
 except (OSError, UnicodeError):
     fail('cannot read prompt source')
 
-m = re.search(r"^## Round %s prompt\s*$" % re.escape(rnd), text, re.M)
+# The redesign request is host text the implementer fills in, kept beside the prompts it feeds.
+heading = 'Redesign template' if rnd == 'redesign' else 'Round %s prompt' % rnd
+m = re.search(r"^## %s\s*$" % re.escape(heading), text, re.M)
 if not m:
-    sys.exit("render-prompt: SKILL.md has no '## Round %s prompt' heading" % rnd)
+    sys.exit("render-prompt: SKILL.md has no '## %s' heading" % heading)
 fence = re.search(r"^```\w*\n(.*?)^```", text[m.end():], re.S | re.M)
 if not fence:
-    sys.exit("render-prompt: no fenced block under '## Round %s prompt'" % rnd)
+    sys.exit("render-prompt: no fenced block under '## %s'" % heading)
 body = fence.group(1)
 
 token = re.compile(r"\{\{([A-Z0-9_]+)\}\}")

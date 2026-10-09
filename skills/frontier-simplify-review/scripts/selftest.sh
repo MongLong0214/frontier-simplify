@@ -115,9 +115,10 @@ ck crosscheck-leak-cannot-forge-match ok env_leak_cannot_forge_a_match
 
 # --- prompt rendering ------------------------------------------------------------------------------
 r1() { python3 "$HERE/lib/render-prompt.py" "$SKILL" 1 REPOSITORY=r BASE_SHA=b ROUND1_HEAD_SHA=h \
-  ATTEMPT_NUMBER=1 MAX_ROUNDS=3 \
+  'REVIEW_BUDGET=automatic attempt 1 of 3' \
   REQUIREMENT_SOURCES_OR_NONE=none KNOWN_ROUTED_OR_NONE=none PROJECT_CLASS_CATALOG_OR_NONE=none \
-  FULL_SUITE_STATUS_OR_UNKNOWN=UNKNOWN TOOL_NOTES_OR_NONE=none; }
+  FULL_SUITE_STATUS_OR_UNKNOWN=UNKNOWN TOOL_NOTES_OR_NONE=none OPEN_INVARIANTS_OR_NONE=none \
+  HOST_NOTES_OR_NONE=none; }
 ck render-round1           ok   r1
 ck render-unsubstituted    fail python3 "$HERE/lib/render-prompt.py" "$SKILL" 1 REPOSITORY=r
 ck render-no-such-round    fail python3 "$HERE/lib/render-prompt.py" "$SKILL" 9

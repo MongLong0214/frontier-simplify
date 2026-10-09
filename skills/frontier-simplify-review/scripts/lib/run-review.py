@@ -6,14 +6,20 @@ import json
 import math
 import os
 from pathlib import Path
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 
+from datetime import datetime, timezone
+
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown, artifact_root,
-                      review_context, review_exit, FAILED, HANDOFF, MAX_ROUNDS, child_environment)
+                      review_context, review_exit, RECORDED, FAILED, HANDOFF, MAX_ROUNDS,
+                      child_environment, REDESIGN_REQUIRED, WITNESS_FAILING)
+import evidence
+import followup
 import ledger
 from scope import build_scope, scope_bytes
 
@@ -110,17 +116,52 @@ def observe_checkout(clone, head, directory, installed, expected_hashes):
     return observations
 
 
-def main(argv=None, freshness_check=None):
+def witness_timeout():
+    timeout = float(os.environ.get('REVIEW_WITNESS_TIMEOUT', '300'))
+    require(math.isfinite(timeout) and timeout > 0, 'witness-timeout',
+            'REVIEW_WITNESS_TIMEOUT must be positive finite seconds')
+    return timeout
+
+
+def run_witnesses(root, repo, head, starts, ends):
+    """Rerun the PR's preserved witnesses on `head`: (rows, witnesses, overlay, logs)."""
+    witnesses, overlay = evidence.view(root, starts, ends)
+    disputed = {w.strip() for w in os.environ.get('REVIEW_WITNESS_DISPUTED', '').split(',') if w.strip()}
+    logs = root / 'witness-runs' / f'{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")}-{head[:12]}'
+    wrapper = shlex.split(os.environ.get('REVIEW_WITNESS_WRAPPER', ''))
+    rows = evidence.precheck(repo, head, witnesses, overlay, logs, witness_timeout(), disputed, wrapper)
+    for wid in sorted(disputed - {row['id'] for row in rows}):
+        print(f'review: REVIEW_WITNESS_DISPUTED names {wid}, which is not an active witness', file=sys.stderr)
+    return rows, witnesses, overlay, logs if rows else None
+
+
+def main(argv=None, freshness_check=None, notices=()):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('phase', choices=['1', '2', 'auto', 'status', 'report', 'path', 'hunks'])
+    p.add_argument('phase', choices=['1', '2', 'auto', 'status', 'report', 'path', 'hunks', 'witnesses'])
     p.add_argument('repo', type=Path)
     p.add_argument('head', help='commit/ref; ignored for report/path')
     p.add_argument('pr', help='stable PR ID; actual round is assigned by the host')
     p.add_argument('base', nargs='?', default='')
     p.add_argument('executor', nargs='?', default='')
+    p.add_argument('--supplementary', action='store_true',
+                   help='review beyond the automatic attempts, under an explicit recorded grant')
+    p.add_argument('--granted-by', default='', help='who granted the supplementary budget')
+    p.add_argument('--budget', type=int, help='supplementary reviews granted for this PR in total')
     a = p.parse_args(argv)
+    if a.supplementary and (not a.granted_by.strip() or a.budget is None or a.budget < 1
+                            or a.phase not in {'1', '2', 'auto'}):
+        p.error('--supplementary needs a review phase, --granted-by and a positive --budget')
+    if not a.supplementary and (a.granted_by or a.budget is not None):
+        p.error('--granted-by and --budget apply only with --supplementary')
+    grant = {'granted_by': a.granted_by.strip(), 'budget': a.budget} if a.supplementary else None
     repo = a.repo.resolve()
     root = root_for(repo, a.pr)
+    def announce():
+        # A caller's own notices follow the budget line, which a person reads first.
+        for notice in notices:
+            print(notice, file=sys.stderr)
+    if a.phase not in {'1', '2', 'auto'}:
+        announce()
     if a.phase == 'path':
         print(root)
         return 0
@@ -128,16 +169,25 @@ def main(argv=None, freshness_check=None):
     def caller_inputs():
         source = os.environ.get('REVIEW_RESPONSE')
         response = Path(source).read_bytes() if source else None
-        context = review_context(SCRIPTS, executor, response)
+        source = os.environ.get('REVIEW_REDESIGN')
+        redesign = Path(source).read_bytes() if source else None
+        context = review_context(SCRIPTS, executor, response, redesign)
         if os.environ.get('REVIEW_TARGET_BRANCH') and not os.environ.get('REVIEW_TARGET_OID'):
             context['target_sha'] = git(repo, 'rev-parse', '--verify',
                                         os.environ['REVIEW_TARGET_BRANCH'] + '^{commit}').decode().strip()
-        return context, response
+        return context, response, redesign
     if a.phase == 'status':
         head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
         base = git(repo, 'rev-parse', '--verify', a.base + '^{commit}').decode().strip() if a.base else None
         ledger.status(root, repo, head, base, caller_inputs()[0])
         return 0
+    if a.phase == 'witnesses':
+        # The implementer's own preflight: the same rerun a follow-up starts with, and no model.
+        head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
+        starts, ends, _ = ledger.audit(root, repo)
+        rows, witnesses, _, logs = run_witnesses(root, repo, head, starts, ends)
+        print(evidence.results_markdown(head, rows, witnesses, logs), end='')
+        return WITNESS_FAILING if evidence.blocking(rows) else 0
     if a.phase in {'report', 'hunks'}:
         if a.phase == 'report':
             ledger.report(root, repo)
@@ -165,10 +215,18 @@ def main(argv=None, freshness_check=None):
         require(not orphans, 'orphaned-preparation',
                 f'unledgered round path already exists: {orphans[0] if orphans else ""}')
         head = git(repo, 'rev-parse', '--verify', a.head + '^{commit}').decode().strip()
-        if len(starts) >= MAX_ROUNDS:
-            ledger.handoff(root, repo, head)
+        automatic, supplementary, _ = ledger.budget(starts)
+        print('review: ' + ledger.cumulative(root, starts, grant), file=sys.stderr)
+        announce()
+        stop_reason = (f"the supplementary budget of {grant['budget']} granted by {grant['granted_by']} "
+                       'is spent' if grant else 'automatic review has stopped')
+        if grant:
+            require(automatic >= MAX_ROUNDS, 'supplementary',
+                    f'{MAX_ROUNDS - automatic} automatic attempt(s) remain; a supplementary grant starts after them')
+        if (supplementary >= grant['budget']) if grant else (len(starts) >= MAX_ROUNDS):
+            ledger.handoff(root, repo, head, stop_reason)
             return HANDOFF
-        context, response = caller_inputs()
+        context, response, redesign = caller_inputs()
         phase = (2 if originals else 1) if a.phase == 'auto' else int(a.phase)
         if a.base:
             base = git(repo, 'rev-parse', '--verify', a.base + '^{commit}').decode().strip()
@@ -207,14 +265,66 @@ def main(argv=None, freshness_check=None):
             available = (bool(end.get('recorded', end.get('accepted')))
                          and ledger.evidence_available(ledger.recompute(
                              repo, root / f"round-{latest['round']:04}", latest), end, latest))
-            return review_exit(available and end.get('fresh_at_finish', True), len(starts))
+            return review_exit(available and end.get('fresh_at_finish', True),
+                               *((supplementary, grant['budget']) if grant else (len(starts),)))
+
+        # Both stops come before a reservation: they launch no reviewer and use no attempt. They
+        # hold for every phase -- a restart or a changed base does not resolve an open contract or
+        # repair what a witness reproduces.
+        reviews = followup.recorded(root, starts, ends)
+        tracked = followup.tracked(reviews)
+        keys = followup.recurring(reviews)
+        if keys:
+            latest_review = starts[reviews[-1][0]]
+            reviewed = (latest_review.get('inputs', {}).get('IMPLEMENTER_REDESIGN.md')
+                        if latest_review.get('redesign_supplied') else None)
+            if redesign is None or digest(redesign) == reviewed:
+                path = followup.redesign_request(root, keys, tracked)
+                print(f'review: REDESIGN_REQUIRED {", ".join(keys)} stayed open in two consecutive '
+                      'reviews' + (' and the supplied redesign was already reviewed' if redesign else '')
+                      + '; no reviewer launched and no attempt used. Answer the template in '
+                      f'{path} and supply it as REVIEW_REDESIGN.', file=sys.stderr)
+                return REDESIGN_REQUIRED
+        witness_rows, witnesses, overlay, logs = run_witnesses(root, repo, head, starts, ends)
+        failing = evidence.blocking(witness_rows)
+        if failing:
+            print(evidence.results_markdown(head, witness_rows, witnesses, logs), end='')
+            print(f'review: WITNESS_FAILING {", ".join(failing)} on {head}: the repair is unfinished; '
+                  'no reviewer launched and no attempt used. If a witness itself is wrong, name it in '
+                  'REVIEW_WITNESS_DISPUTED and the reviewer will judge it.', file=sys.stderr)
+            return WITNESS_FAILING
+        # A first review has nothing to carry; any later one, restart or not, gets what came before.
+        carry = bool(reviews) or phase == 2
+        notes = []
+        if reviews:
+            latest_round = reviews[-1][0]
+            repair = run(['git', '-C', repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
+                          '--no-renames', starts[latest_round]['head_sha'], head])
+            warning = repair.returncode == 0 and followup.shape_warning(tracked, latest_round, repair.stdout)
+            if warning:
+                notes.append(warning)
+        if response is not None:
+            missing = followup.unreceipted(response.decode('utf-8', 'replace'),
+                                           followup.executed_texts(root, ends))
+            if missing:
+                notes.append('IMPLEMENTER_RESPONSE.md cites finding IDs that no review recorded for this '
+                             f'PR contains: {", ".join(missing)}. A review run outside this runner has no '
+                             'receipt, budget or handoff here; weigh those citations as the implementer\'s account.')
+        for note in notes:
+            print('review: ' + note, file=sys.stderr)
+
         n = len(starts) + 1
+        last = (supplementary + 1 >= grant['budget']) if grant else (n >= MAX_ROUNDS)
         d = root / f'round-{n:04}'
         inputs = []
         start = {'event': 'started', 'round': n, 'phase': phase, 'head_sha': head,
                  'base_sha': base, 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE,
                  'inputs': {}, 'context': context, 'executor': executor,
                  'skill_sha256': context['protocol_sha256'], 'checkout_checks_version': 1}
+        if grant:
+            start['supplementary'] = dict(grant, number=supplementary + 1)
+        if redesign is not None and carry:
+            start['redesign_supplied'] = True
         started = False
         executed = False
         finished = False
@@ -273,6 +383,12 @@ def main(argv=None, freshness_check=None):
                 freeze(d / 'REMEDIATION_CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', r1head, head))
                 freeze(d / 'REMEDIATION_HUNKS.md', hunk_markdown(hunks(repo, r1head, head)).encode())
                 inputs += ['REMEDIATION.patch', 'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md']
+            if carry:
+                freeze(d / 'IMPLEMENTER_REDESIGN.md', redesign if redesign is not None else
+                       b'No redesign supplied.\n')
+                freeze(d / 'WITNESS_RESULTS.md',
+                       evidence.results_markdown(head, witness_rows, witnesses).encode())
+                inputs += ['IMPLEMENTER_REDESIGN.md', 'WITNESS_RESULTS.md']
             seal = run([SCRIPTS / 'target-seal.sh', 'seal', repo, base, head, d])
             require(seal.returncode == 0, 'target', seal.stderr.decode().strip())
             with (d / 'SEAL.txt').open('a') as seal_file:
@@ -281,8 +397,12 @@ def main(argv=None, freshness_check=None):
             freeze(d / 'DIFF.patch', git(repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head))
             freeze(d / 'CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', base, head))
             inputs += ['DIFF.patch', 'CHANGED.txt']
+            budget = (f"supplementary review {supplementary + 1} of {grant['budget']} granted by "
+                      f"{grant['granted_by']}, after {automatic} automatic attempts" if grant
+                      else f'automatic attempt {n} of {MAX_ROUNDS}')
             values = {'REPOSITORY': os.environ.get('REVIEW_REPOSITORY_NAME') or str(repo), 'BASE_SHA': base,
-                      'ATTEMPT_NUMBER': str(n), 'MAX_ROUNDS': str(MAX_ROUNDS),
+                      'REVIEW_BUDGET': budget, 'OPEN_INVARIANTS_OR_NONE': followup.carried(tracked),
+                      'HOST_NOTES_OR_NONE': '\n' + '\n'.join('- ' + note for note in notes) if notes else 'none',
                       'ROUND1_HEAD_SHA': head if phase == 1 else start['round1_head_sha'],
                       'ROUND2_HEAD_SHA': head, 'TRUSTED_INVENTORY_SHA256': start.get('inventory_sha256', ''),
                       'INVENTORY_INTEGRITY_RESULT': 'VERIFIED',
@@ -320,6 +440,9 @@ def main(argv=None, freshness_check=None):
                     continue
                 copy_input(d / name, clone, name)
                 installed.append(name)
+            witness_installed, witness_notes = evidence.prepare(clone, overlay)
+            for note in witness_notes:
+                print('review: ' + note, file=sys.stderr)
             executor = start['executor']
             env = {k: v for k, v in child_environment().items() if not k.startswith('REVIEW_')}
             # Name the model, not only the executor. `executor codex` while REVIEW_CODEX_MODEL
@@ -333,6 +456,10 @@ def main(argv=None, freshness_check=None):
             if executor == 'stub':
                 # Same guards and receipt, but never an eligible merge result.
                 shutil.copyfile(os.environ['REVIEW_STUB'], d / 'events.jsonl')
+                if os.environ.get('REVIEW_STUB_EVIDENCE') and witness_installed is not None:
+                    # Stands in for a reviewer writing its reproductions.
+                    shutil.copytree(os.environ['REVIEW_STUB_EVIDENCE'], clone / evidence.EVIDENCE,
+                                    dirs_exist_ok=True)
                 executed = True
                 (d / 'executor.err').write_text('test fixture executor\n')
                 rc = 0
@@ -373,6 +500,12 @@ def main(argv=None, freshness_check=None):
             (d / 'executor-exit.txt').write_text(str(rc))
             observations = observe_checkout(clone, head, d, installed, start['inputs'])
             (d / 'checkout-head.txt').write_text(observations['head'].get('observed_sha', '') + '\n')
+            try:
+                witnessed = evidence.collect(clone, d, witness_installed)
+            except (Rejected, OSError, ValueError) as e:
+                # Losing a reproduction is worth saying, not worth discarding the review over.
+                witnessed = False
+                print(f'review: witnesses not preserved: {e}', file=sys.stderr)
             artifact = run([sys.executable, SCRIPTS / 'lib/extract.py', d / 'events.jsonl', '--final'])
             freeze(d / 'ARTIFACT.md', artifact.stdout)
             checks = ledger.recompute(repo, d, start, clone)
@@ -387,7 +520,8 @@ def main(argv=None, freshness_check=None):
                    'fresh_at_finish': fresh, 'freshness_reason': freshness_reason,
                    'guards': checks, 'checkout_observations': observations,
                    'inventory_sha256': digest(artifact.stdout) if phase == 1 else start['inventory_sha256'],
-                   'outputs': ledger.hashes(d, ['ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt'])}
+                   'outputs': ledger.hashes(d, ['ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt']
+                                            + (['WITNESSES.json'] if witnessed else []))}
             ledger.append(root, end)
             finished = True
             for check in checks:
@@ -395,11 +529,12 @@ def main(argv=None, freshness_check=None):
                     print(check['reason'], file=sys.stderr)
             print(f'review: {"RECORDED" if recorded else "FAILED"} {"FRESH" if fresh else "STALE"} artifact {d / "ARTIFACT.md"}; '
                   'maintainer must assess the evidence; no automatic merge approval')
+            print('review: ' + ledger.cumulative(root, {**starts, n: start}, grant), file=sys.stderr)
             if not fresh:
                 print(freshness_reason, file=sys.stderr)
-            if n == MAX_ROUNDS:
-                ledger.handoff(root, repo, head)
-            return review_exit(recorded and fresh, n)
+            if last:
+                ledger.handoff(root, repo, head, stop_reason)
+            return FAILED if not (recorded and fresh) else HANDOFF if last else RECORDED
         except (Rejected, ledger.MissingGuard, OSError, ValueError, KeyError,
                 subprocess.SubprocessError, KeyboardInterrupt) as e:
             reason = (f'executor timed out after {timeout:g}s' if isinstance(e, subprocess.TimeoutExpired)
@@ -427,8 +562,8 @@ def main(argv=None, freshness_check=None):
                 end['checkout_observations'] = observations
             ledger.append(root, end)
             print(reason, file=sys.stderr)
-            if n == MAX_ROUNDS:
-                ledger.handoff(root, repo, head)
+            if last:
+                ledger.handoff(root, repo, head, stop_reason)
             return FAILED
         finally:
             for sig, handler in old_handlers.items():
