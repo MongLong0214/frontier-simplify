@@ -57,7 +57,8 @@ class RendererTests(unittest.TestCase):
                   'ROUND1_HEAD_SHA': 'head', 'REVIEW_BUDGET': 'automatic attempt 1 of 3',
                   'REQUIREMENT_SOURCES_OR_NONE': 'none', 'KNOWN_ROUTED_OR_NONE': 'none',
                   'PROJECT_CLASS_CATALOG_OR_NONE': 'none',
-                  'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none'}
+                  'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none',
+                  'OPEN_INVARIANTS_OR_NONE': 'none', 'HOST_NOTES_OR_NONE': 'none'}
         result = self.render('--values-stdin', payload=json.dumps(values).encode())
         self.assertEqual(result.returncode, 0, result.stderr)
         prompt = result.stdout.decode()
@@ -66,7 +67,7 @@ class RendererTests(unittest.TestCase):
                             'falsification', 'line location', 'UNAVAILABLE',
                             'producer/sink table', 'could not enumerate', '- invariant: <KEY>',
                             'reproduce it there and classify it', 'excluding the path from the contract',
-                            'review_evidence/<FINDING-ID>.sh'):
+                            'review_evidence/<FINDING-ID>.sh', 'restarted scope review'):
             with self.subTest(instruction=instruction):
                 self.assertIn(instruction, prompt)
         self.assertIn('SCOPE.json', prompt)

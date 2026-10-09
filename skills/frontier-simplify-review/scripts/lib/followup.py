@@ -167,13 +167,11 @@ def summary(root, starts, ends, originals):
     keys = recurring(recorded(root, starts, ends))
     if keys:
         print('REDESIGN_REQUIRED before another review: ' + ', '.join(keys))
-    since = originals[-1][0] if originals else None
-    if since is not None:
-        witnesses, _ = evidence.view(root, starts, ends, since)
-        if witnesses:
-            print('witness ledger:')
-            for line in evidence.ledger_rows(witnesses):
-                print('  ' + line[2:])
+    witnesses, _ = evidence.view(root, starts, ends)
+    if witnesses:
+        print('witness ledger:')
+        for line in evidence.ledger_rows(witnesses):
+            print('  ' + line[2:])
 
 
 def cell(text):
@@ -212,7 +210,7 @@ def write_handoff(root, head, starts, ends, originals, reason):
     else:
         lines.append('No review reported a contract invariant line. That is not evidence that none is open.')
     lines += ['', '## Witnesses', '']
-    witnesses = evidence.view(root, starts, ends, originals[-1][0])[0] if originals else {}
+    witnesses = evidence.view(root, starts, ends)[0]
     lines += evidence.ledger_rows(witnesses) or ['No preserved witness.']
     redesigned = [n for n in starts if 'IMPLEMENTER_REDESIGN.md' in starts[n].get('inputs', {})
                   and starts[n].get('redesign_supplied')]

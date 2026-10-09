@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -31,6 +32,16 @@ def run(args, cwd=None):
     return subprocess.run(list(map(str, args)), cwd=cwd, capture_output=True, env=child_environment())
 
 
+def witness_environment():
+    """A witness is reviewer-written code, and the host runs it outside the reviewer's sandbox.
+
+    So it gets what a shell needs and nothing the runner happens to hold: no tokens, keys or
+    host settings from the environment. File access is the wrapper's job (REVIEW_WITNESS_WRAPPER).
+    """
+    keep = {'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'SHELL', 'TERM'}
+    return dict({k: v for k, v in child_environment().items() if k in keep}, PYTHONDONTWRITEBYTECODE='1')
+
+
 def evidence_path(rel):
     path = PurePosixPath(rel)
     require(not path.is_absolute() and '..' not in path.parts and len(path.parts) >= 2
@@ -39,24 +50,65 @@ def evidence_path(rel):
     return path
 
 
-def prepare(clone, overlay):
-    """Create review_evidence/ and restore earlier witnesses without replacing checkout files."""
+def remove(path):
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def prepare(clone, overlay, replace=False):
+    """Create review_evidence/ and restore the preserved files.
+
+    The reviewer's checkout keeps the tree's own files (replace=False): its tracked bytes are
+    observed afterwards. A disposable precheck clone replaces them (replace=True), because a
+    witness is only the reviewer's witness when every preserved file it reads is the preserved
+    one -- the tree under review must not supply a helper. Neither mode writes through a link.
+    """
     target = clone / EVIDENCE
     if target.is_symlink() or (target.exists() and not target.is_dir()):
-        return None, [f'{EVIDENCE} is not a directory in this tree; witnesses are not preserved']
+        if not replace:
+            return None, [f'{EVIDENCE} is not a directory in this tree; witnesses are not preserved']
+        remove(target)
     target.mkdir(exist_ok=True)
     installed, notes = {}, []
     for rel, source in sorted(overlay.items()):
-        destination = clone / rel
-        if destination.exists() or destination.is_symlink():
-            notes.append(f'{rel} exists in this tree; the preserved copy was not installed')
+        parts = PurePosixPath(rel).parts
+        destination, blocked = clone, None
+        for index, part in enumerate(parts):
+            destination = destination / part
+            last = index == len(parts) - 1
+            if destination.is_symlink() or (destination.exists() and (last or not destination.is_dir())):
+                blocked = blocked or destination
+                if not replace:
+                    break
+                remove(destination)
+            if not last:
+                destination.mkdir(exist_ok=True)
+        if blocked is not None and not replace:
+            notes.append(f'{rel}: the tree has {blocked.relative_to(clone).as_posix()} there; '
+                         'the preserved copy was not installed')
             continue
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        if blocked is not None:
+            notes.append(f'{rel}: the preserved copy replaced the tree\'s file for this run')
         data = source.read_bytes()
         destination.write_bytes(data)
         destination.chmod(source.stat().st_mode & 0o777)
         installed[rel] = digest(data)
     return installed, notes
+
+
+def intact(clone, overlay):
+    """True when every preserved file sits in the clone byte for byte, with no link on its path."""
+    for rel, source in overlay.items():
+        path = clone
+        for part in PurePosixPath(rel).parts:
+            path = path / part
+            if path.is_symlink():
+                return False
+        if not path.is_file() or path.read_bytes() != source.read_bytes():
+            return False
+    return True
 
 
 def collect(clone, directory, installed):
@@ -105,8 +157,8 @@ def collect(clone, directory, installed):
     return True
 
 
-def view(root, starts, ends, since):
-    """Witnesses of the review sequence that began at attempt `since`, from recorded reviews.
+def view(root, starts, ends, since=1):
+    """Witnesses of this PR's recorded reviews from attempt `since` on.
 
     Later bytes replace earlier ones path by path. An ID is a top-level review_evidence/<ID>.sh.
     `- witness_obsolete: <ID> -- <reason>` in a later recorded review retires it; a retirement
@@ -140,15 +192,15 @@ def view(root, starts, ends, since):
     return witnesses, overlay
 
 
-def execute(clone, rel, logs, timeout):
+def execute(clone, rel, logs, timeout, wrapper=()):
     """Run one witness in its own process group. Exit 0 is PASS; anything else is not."""
     logs.mkdir(parents=True)
     started = time.monotonic()
     with (logs / 'stdout.txt').open('wb') as out, (logs / 'stderr.txt').open('wb') as err:
         child = None
         try:
-            child = subprocess.Popen(['bash', rel], cwd=clone, stdout=out, stderr=err,
-                                     stdin=subprocess.DEVNULL, env=child_environment(),
+            child = subprocess.Popen([*wrapper, 'bash', rel], cwd=clone, stdout=out, stderr=err,
+                                     stdin=subprocess.DEVNULL, env=witness_environment(),
                                      start_new_session=True)
             try:
                 rc = child.wait(timeout=timeout)
@@ -169,7 +221,7 @@ def execute(clone, rel, logs, timeout):
     return ('PASS' if rc == 0 else 'FAIL'), rc, time.monotonic() - started
 
 
-def precheck(repo, head, witnesses, overlay, output, timeout, disputed):
+def precheck(repo, head, witnesses, overlay, output, timeout, disputed, wrapper=()):
     """Rerun every active witness in a clean checkout of `head`; no model, no ledger write."""
     rows = []
     active = sorted((w for w in witnesses.values() if w['status'] == 'active'), key=lambda w: w['id'])
@@ -190,17 +242,16 @@ def precheck(repo, head, witnesses, overlay, output, timeout, disputed):
                         result = run(['git', '-C', clone, *command])
                         require(result.returncode == 0, 'witness-checkout',
                                 f'cannot reset the witness checkout to {head}')
-                    _, notes = prepare(clone, overlay)
-                    script = clone / witness['path']
-                    if (script.is_symlink() or not script.is_file()
-                            or digest(script.read_bytes()) != witness['sha256']):
-                        # The tree under review supplies this path, so running it would let the
-                        # repair stand in for the reviewer's witness.
+                    _, notes = prepare(clone, overlay, replace=True)
+                    if not intact(clone, overlay):
+                        # Running anything else would let the repair stand in for the
+                        # reviewer's witness or one of the files it reads.
                         rows.append(dict(witness, result='ERROR', exit=None, seconds=0.0,
-                                         notes=notes + ['the reviewed tree replaces this witness'],
+                                         notes=notes + ['the preserved files could not be restored intact'],
                                          disputed=witness['id'] in disputed))
                         continue
-                    result, rc, seconds = execute(clone, witness['path'], output / witness['id'], timeout)
+                    result, rc, seconds = execute(clone, witness['path'], output / witness['id'],
+                                                  timeout, wrapper)
                     rows.append(dict(witness, result=result, exit=rc, seconds=seconds, notes=notes,
                                      disputed=witness['id'] in disputed))
     finally:

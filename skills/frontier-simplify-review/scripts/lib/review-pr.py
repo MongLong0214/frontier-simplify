@@ -99,22 +99,23 @@ def main():
     # building its own checkout, and a less careful reviewer would have reviewed the base.
     # The reviewer's own cwd is the correct disposable checkout; the prompt gets the identity.
     # History supplies attributed leads, never required IDs or self-promoted obligations.
+    notices = []
     if a.phase in {'1', '2', 'auto'}:
         ledger_root = runner.root_for(mirror, str(a.pr))
         os.environ['REVIEW_HISTORY'] = catalog.render(catalog.harvest(ledger_root))
-        print('review-pr: project history supplied as leads, not standing obligations', file=sys.stderr)
+        notices.append('review-pr: project history supplied as leads, not standing obligations')
     argv = [a.phase, str(mirror), head, str(a.pr), base, a.executor]
     if a.supplementary or a.granted_by or a.budget is not None:
         argv += ['--supplementary'] * a.supplementary + ['--granted-by', a.granted_by]
         argv += ['--budget', str(a.budget)] if a.budget is not None else []
-    print(f'review-pr: consumer host {host}', file=sys.stderr)
+    notices.append(f'review-pr: consumer host {host}')
     def still_current():
         current = metadata_for_pr()
         require((current['headRefOid'], current['baseRefOid']) == (head, target),
                 'stale-pr', f'PR changed during review; reviewed {head} against {target}, '
                 f'current {current["headRefOid"]} against {current["baseRefOid"]}')
     # Cache selection and round allocation share the same lock, including cached returns.
-    return runner.main(argv, freshness_check=still_current)
+    return runner.main(argv, freshness_check=still_current, notices=notices)
 
 
 if __name__ == '__main__':

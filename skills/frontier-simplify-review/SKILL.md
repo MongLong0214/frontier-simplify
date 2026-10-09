@@ -124,7 +124,7 @@ Follow-ups verify the table row by row; a row they find outside it is counted as
 
 Each contract carries a stable key in a final line, `- invariant: KEY | family N | STATUS | sentence`.
 When the same key is still OPEN, ROUND1-ESCAPE or REGRESSION in two consecutive recorded reviews, the
-host launches no reviewer. It asks for `IMPLEMENTER_REDESIGN.md` (template below): one enforcement point,
+host launches no further reviewer of either phase. It asks for `IMPLEMENTER_REDESIGN.md` (template below): one enforcement point,
 allow-list or argued deny-list, and evidence that every producer passes through it. The next review
 judges the redesign first. A reviewer that omits the line does not trigger the stop; absence of the
 line is not convergence.
@@ -177,6 +177,8 @@ Known and already routed exact defects: {{KNOWN_ROUTED_OR_NONE}}
 Project history and review leads: {{PROJECT_CLASS_CATALOG_OR_NONE}}
 Ordinary full-suite status: {{FULL_SUITE_STATUS_OR_UNKNOWN}}
 Tool or platform notes: {{TOOL_NOTES_OR_NONE}}
+Open contract invariants carried from earlier reviews: {{OPEN_INVARIANTS_OR_NONE}}
+Host observations: {{HOST_NOTES_OR_NONE}}
 
 Your cwd is a disposable checkout of Reviewed head. DIFF.patch is Base..Reviewed-head;
 CHANGED.txt is Git's changed-file list. Verify the checkout and inspect that diff, the changed
@@ -184,6 +186,10 @@ files, and directly affected callers, authorities, readers/writers, equivalents 
 SCOPE.json is frozen metadata for Base commit..Reviewed head: paths, change kinds and optional
 implementation/test grouping hints. Read it to navigate, not as proof of coverage or a request
 for group-by-group PASS entries; the diff and code remain the evidence.
+If this PR had earlier reviews, this is a restarted scope review: WITNESS_RESULTS.md lists their
+preserved witnesses rerun on Reviewed head, review_evidence/ holds their files, and
+IMPLEMENTER_REDESIGN.md holds any redesign. Judge a supplied redesign before anything else, and
+reuse the keys listed under Open contract invariants for the same contracts.
 Check the exact commit endpoints and full changed-file list first. For a deleted file, read the
 old side at Base. Inspect mode, type, binary and runtime Markdown changes for their actual
 behavior, or name the limit. File count and LOC do not establish safety. Read a local change
@@ -273,7 +279,8 @@ mapping is a prerequisite for running the reviewer. Unrelated changes need a fre
 Record that in the review itself. A fresh scope review consumes the same PR's remaining budget;
 at the limit, hand off that need instead of restarting. No escape form can buy another attempt.
 
-Before a follow-up launches a model, the host reruns the preserved witnesses on the new head. A
+Before any later review of the PR launches a model, phase-1 restarts included, the host reruns
+the preserved witnesses on the new head. A
 failing witness means the repair is unfinished: the implementer gets the results instead of a
 review, and no attempt is consumed. A failure the implementer believes is the witness's own fault
 is named explicitly; the reviewer then sees it marked disputed and decides. A key that stayed open

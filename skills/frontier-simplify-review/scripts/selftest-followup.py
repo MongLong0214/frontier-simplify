@@ -124,6 +124,17 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
     (t / 'slow' / 'w.sh').write_text('sleep 30\n')
     check('witness-timeout-is-not-a-pass',
           evidence.execute(t / 'slow', 'w.sh', t / 'slow-logs', 0.5)[0] == 'TIMEOUT')
+    (t / 'env').mkdir()
+    (t / 'env' / 'w.sh').write_text('test -z "${SECRET_TOKEN:-}" && test -n "$PATH"\n')
+    with patch.dict(os.environ, SECRET_TOKEN='do-not-leak'):
+        check('witnesses-do-not-inherit-host-secrets',
+              evidence.execute(t / 'env', 'w.sh', t / 'env-logs', 30)[0] == 'PASS')
+    wrapper = t / 'wrapper.sh'
+    wrapper.write_text(f'#!/bin/sh\ntouch {t}/wrapped\nexec "$@"\n')
+    wrapper.chmod(0o755)
+    check('the-wrapper-runs-each-witness',
+          evidence.execute(t / 'env', 'w.sh', t / 'wrapped-logs', 30, [str(wrapper)])[0] == 'PASS'
+          and (t / 'wrapped').exists())
     real_wait = subprocess.Popen.wait
     def cancelled_wait(self, timeout=None):
         if timeout is not None:
@@ -200,11 +211,53 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
     git(repo, 'switch', '-q', '-')
     adopted = host('2', adopted_head, 'adopted')
     check('a-tree-cannot-replace-the-witness-it-is-judged-by',
-          adopted.returncode == 13 and '| F-1 | 1 | ERROR |' in adopted.stdout
-          and 'the reviewed tree replaces this witness' in adopted.stdout)
+          adopted.returncode == 13 and '| F-1 | 1 | FAIL |' in adopted.stdout
+          and "the preserved copy replaced the tree's file" in adopted.stdout)
+    git(repo, 'switch', '-q', '--detach', h2)
+    (repo / 'review_evidence').mkdir(exist_ok=True)
+    shadow_head = commit(repo, {'review_evidence/lib.sh': 'has_bug() { return 1; }\n'}, 'helper rewritten')
+    git(repo, 'switch', '-q', '-')
+    host('1', h1, 'shadow', REVIEW_STUB_EVIDENCE=str(witness_dir))
+    shadowed = host('2', shadow_head, 'shadow')
+    check('a-tree-cannot-replace-a-helper-its-witness-reads',
+          shadowed.returncode == 13 and '| F-1 | 1 | FAIL |' in shadowed.stdout
+          and len(ledger.read(root('shadow'))) == 3)
+
+    outside = t / 'outside'
+    outside.mkdir()
+    linked_evidence = t / 'linked-evidence'
+    (linked_evidence / 'sub').mkdir(parents=True)
+    (linked_evidence / 'F-1.sh').write_text('! grep -q bug a.txt\n')
+    (linked_evidence / 'sub' / 'x.txt').write_text('helper\n')
+    host('1', h1, 'link', REVIEW_STUB_EVIDENCE=str(linked_evidence))
+    git(repo, 'switch', '-q', '--detach', h3)
+    (repo / 'review_evidence').mkdir(exist_ok=True)
+    (repo / 'review_evidence' / 'sub').symlink_to(outside)
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-qm', 'evidence link')
+    link_head = git(repo, 'rev-parse', 'HEAD')
+    git(repo, 'switch', '-q', '-')
+    linked = host('2', link_head, 'link')
+    check('restoration-never-writes-through-a-link',
+          linked.returncode == 10 and not any(outside.iterdir())
+          and '| F-1 | 1 | PASS |' in (root('link') / 'round-0002/WITNESS_RESULTS.md').read_text())
+
+    host('1', h1, 'restart', REVIEW_STUB_EVIDENCE=str(witness_dir))
+    restarted = host('1', h2, 'restart')
+    check('a-phase-1-restart-still-reruns-witnesses',
+          restarted.returncode == 13 and len(ledger.read(root('restart'))) == 3
+          and host('witnesses', h2, 'restart').returncode == 13)
+    rerun = host('1', h3, 'restart')
+    restart_round = root('restart') / 'round-0002'
+    check('a-restarted-scope-review-carries-witnesses-and-redesign',
+          rerun.returncode == 10 and '| F-1 | 1 | PASS |' in (restart_round / 'WITNESS_RESULTS.md').read_text()
+          and (restart_round / 'IMPLEMENTER_REDESIGN.md').is_file()
+          and not (restart_round / 'REMEDIATION.patch').exists()
+          and 'restarted scope review' in (restart_round / 'prompt.txt').read_text())
 
     host('1', h1, 'disputed', REVIEW_STUB_EVIDENCE=str(witness_dir))
-    disputed = host('2', h2, 'disputed', REVIEW_WITNESS_DISPUTED='F-1')
+    disputed = host('2', h2, 'disputed', REVIEW_WITNESS_DISPUTED='F-1',
+                    REVIEW_WITNESS_WRAPPER=f'{wrapper} --')
     check('disputed-witness-lets-the-reviewer-judge',
           disputed.returncode == 10 and 'failing, disputed by the implementer'
           in (root('disputed') / 'round-0002/WITNESS_RESULTS.md').read_text())
@@ -230,6 +283,12 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
           and '## Single enforcement point' in request.read_text())
     check('status-names-the-required-redesign',
           'REDESIGN_REQUIRED before another review: receipt-delivered' in host('status', h3, 'r').stdout)
+    check('a-phase-1-restart-cannot-skip-the-redesign',
+          host('1', h3, 'r').returncode == 12 and len(ledger.audit(r, repo)[0]) == 2)
+    moved_base = subprocess.run([str(SCRIPTS / 'review-round.sh'), 'auto', str(repo), h3, 'r', h1, 'stub'],
+                                env=env, capture_output=True, text=True)
+    check('a-changed-base-cannot-skip-the-redesign',
+          moved_base.returncode == 12 and len(ledger.audit(r, repo)[0]) == 2)
     design = t / 'redesign.md'
     design.write_text('# Redesign\nOne certification point records provenance at the producer.\n')
     third = host('2', h3, 'r', REVIEW_REDESIGN=str(design))
@@ -284,6 +343,22 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
     automatic, used, recorded_grant = ledger.budget(ledger.audit(s, repo)[0])
     check('budget-counts-automatic-and-supplementary-apart',
           (automatic, used, recorded_grant['granted_by']) == (3, 1, 'maintainer'))
+
+    # --- the PR adapter: the budget line comes first there too ---------------------------------------
+    git(repo, 'remote', 'add', 'origin', str(repo))
+    fake = t / 'bin'
+    fake.mkdir()
+    (fake / 'gh').write_text('#!' + sys.executable + '\nprint(' + repr(json.dumps(
+        {'number': 9, 'headRefOid': h1, 'baseRefOid': base, 'url': 'offline'})) + ')\n')
+    (fake / 'gh').chmod(0o755)
+    stub(events, OPEN)
+    adapter = subprocess.run([str(SCRIPTS / 'review-pr.sh'), str(repo), '9', 'auto', 'stub'],
+                             env=dict(env, PATH=f"{fake}{os.pathsep}{env['PATH']}"),
+                             capture_output=True, text=True)
+    lines = adapter.stderr.splitlines()
+    check('the-pr-adapter-prints-the-cumulative-line-first',
+          adapter.returncode == 10 and lines[0].startswith('review: PR cumulative reviews 0 ')
+          and any(line.startswith('review-pr: consumer host') for line in lines[1:]))
 
 print(f'followup-selftest: {sum(results)} passed, {len(results) - sum(results)} failed')
 sys.exit(0 if all(results) else 1)

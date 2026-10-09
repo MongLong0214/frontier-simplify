@@ -68,7 +68,7 @@ def review_context(scripts, executor, response, redesign=None):
         'REVIEW_REQUIREMENTS': 'none', 'REVIEW_ROUTED': 'none', 'REVIEW_CATALOG': 'none',
         'REVIEW_SUITE_STATUS': 'UNKNOWN', 'REVIEW_TOOL_NOTES': 'none',
         'REVIEW_CODEX_MODEL': '', 'REVIEW_TARGET_OID': '', 'REVIEW_TIMEOUT': '1800',
-        'REVIEW_WITNESS_DISPUTED': '',
+        'REVIEW_WITNESS_DISPUTED': '', 'REVIEW_WITNESS_WRAPPER': '',
     }.items()}
     context = dict(inputs_sha256=digest(json.dumps(values, sort_keys=True).encode()),
                    response_sha256=digest(response) if response is not None else None,
