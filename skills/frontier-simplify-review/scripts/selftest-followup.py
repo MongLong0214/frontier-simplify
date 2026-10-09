@@ -130,11 +130,12 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
         check('witnesses-do-not-inherit-host-secrets',
               evidence.execute(t / 'env', 'w.sh', t / 'env-logs', 30)[0] == 'PASS')
     wrapper = t / 'wrapper.sh'
-    wrapper.write_text(f'#!/bin/sh\ntouch {t}/wrapped\nexec "$@"\n')
+    # POSIX sh only: Linux runs this with dash.
+    wrapper.write_text(f'#!/bin/sh\ntouch "{t}/wrapped-$1"\nshift\nexec "$@"\n')
     wrapper.chmod(0o755)
     check('the-wrapper-runs-each-witness',
-          evidence.execute(t / 'env', 'w.sh', t / 'wrapped-logs', 30, [str(wrapper)])[0] == 'PASS'
-          and (t / 'wrapped').exists())
+          evidence.execute(t / 'env', 'w.sh', t / 'wrapped-logs', 30, [str(wrapper), 'unit'])[0] == 'PASS'
+          and (t / 'wrapped-unit').exists())
     real_wait = subprocess.Popen.wait
     def cancelled_wait(self, timeout=None):
         if timeout is not None:
@@ -257,10 +258,11 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
 
     host('1', h1, 'disputed', REVIEW_STUB_EVIDENCE=str(witness_dir))
     disputed = host('2', h2, 'disputed', REVIEW_WITNESS_DISPUTED='F-1',
-                    REVIEW_WITNESS_WRAPPER=f'{wrapper} --')
+                    REVIEW_WITNESS_WRAPPER=f'{wrapper} precheck')
     check('disputed-witness-lets-the-reviewer-judge',
           disputed.returncode == 10 and 'failing, disputed by the implementer'
           in (root('disputed') / 'round-0002/WITNESS_RESULTS.md').read_text())
+    check('the-precheck-runs-witnesses-through-the-configured-wrapper', (t / 'wrapped-precheck').exists())
 
     # --- redesign: the same open key twice stops the next review ------------------------------------
     response = t / 'response.md'
