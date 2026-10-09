@@ -145,11 +145,23 @@ skills/frontier-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBE
   and freshness at finish. It announces evidence checks; historical freshness is not current PR state.
 - Executors time out after 1,800 seconds by default (`REVIEW_TIMEOUT` changes it). Timeout and
   SIGINT/SIGTERM stop their process group and preserve the failed attempt.
+- Contract defects are reported as an invariant with a producer/sink table, enumerated once;
+  follow-ups verify that table instead of finding one more path per round. A defect that also
+  exists at the base is classified, and one inside the change's new contract comes with the option
+  of shrinking the contract.
+- Reviewer reproductions saved in `review_evidence/` are kept outside the checkout and rerun on the
+  next head before any model starts. A failing witness returns the repair without using an attempt.
+- A contract invariant still open in two consecutive reviews stops the next review and asks for a
+  redesign instead; the template is rendered from the skill.
+- After the three automatic attempts, more review needs `--supplementary --granted-by WHO --budget N`.
+  Every round prints the PR's cumulative count and time, and a spent budget writes `HANDOFF.md`
+  asking for one decision.
 
 Exit **10** means evidence recorded, **11** means the budget ended in a human handoff, and **5**
-means failed or stale evidence. None means approval. Three attempts bound automatic repetition;
-they do not guarantee correct review, closed defects or a safe merge. Provider-side model revisions
-and unexposed executor defaults cannot be fingerprinted and remain unknown.
+means failed or stale evidence. **12** (redesign required) and **13** (a preserved witness fails)
+return before any reservation or model launch. None means approval. Three attempts bound automatic
+repetition; they do not guarantee correct review, closed defects or a safe merge. Provider-side model
+revisions and unexposed executor defaults cannot be fingerprinted and remain unknown.
 
 Help and read-only commands return **0**; invalid command syntax returns **2**. A valid target
 reserves an attempt before preparing inputs, so a later failure consumes it. Legacy histories remain

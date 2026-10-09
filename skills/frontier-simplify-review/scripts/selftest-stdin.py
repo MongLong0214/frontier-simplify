@@ -54,7 +54,7 @@ class RendererTests(unittest.TestCase):
     def test_real_round1_prompt_carries_investigation_guidance(self):
         self.skill = SCRIPTS.parent / 'SKILL.md'
         values = {'REPOSITORY': '한글 {{BASE_SHA}} ```', 'BASE_SHA': 'base',
-                  'ROUND1_HEAD_SHA': 'head', 'ATTEMPT_NUMBER': '1', 'MAX_ROUNDS': '3',
+                  'ROUND1_HEAD_SHA': 'head', 'REVIEW_BUDGET': 'automatic attempt 1 of 3',
                   'REQUIREMENT_SOURCES_OR_NONE': 'none', 'KNOWN_ROUTED_OR_NONE': 'none',
                   'PROJECT_CLASS_CATALOG_OR_NONE': 'none',
                   'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none'}
@@ -63,7 +63,10 @@ class RendererTests(unittest.TestCase):
         prompt = result.stdout.decode()
         self.assertIn(values['REPOSITORY'], prompt)
         for instruction in ('deleted file', 'old side', 'direct authority', 'sibling',
-                            'falsification', 'line location', 'UNAVAILABLE'):
+                            'falsification', 'line location', 'UNAVAILABLE',
+                            'producer/sink table', 'could not enumerate', '- invariant: <KEY>',
+                            'reproduce it there and classify it', 'excluding the path from the contract',
+                            'review_evidence/<FINDING-ID>.sh'):
             with self.subTest(instruction=instruction):
                 self.assertIn(instruction, prompt)
         self.assertIn('SCOPE.json', prompt)
@@ -72,10 +75,11 @@ class RendererTests(unittest.TestCase):
         skill = SCRIPTS.parent / 'SKILL.md'
         values = {'REPOSITORY': 'repo', 'BASE_SHA': 'base', 'ROUND1_HEAD_SHA': 'original',
                   'ROUND2_HEAD_SHA': 'repair', 'TRUSTED_INVENTORY_SHA256': 'digest',
-                  'INVENTORY_INTEGRITY_RESULT': 'ok', 'ATTEMPT_NUMBER': '2',
-                  'MAX_ROUNDS': '3', 'REQUIREMENT_SOURCES_OR_NONE': 'none',
+                  'INVENTORY_INTEGRITY_RESULT': 'ok', 'REVIEW_BUDGET': 'automatic attempt 2 of 3',
+                  'REQUIREMENT_SOURCES_OR_NONE': 'none',
                   'KNOWN_ROUTED_OR_NONE': 'none', 'PROJECT_CLASS_CATALOG_OR_NONE': 'none',
-                  'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none'}
+                  'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none',
+                  'OPEN_INVARIANTS_OR_NONE': 'none', 'HOST_NOTES_OR_NONE': 'none'}
         result = subprocess.run([sys.executable, str(RENDERER), str(skill), '2',
                                  '--values-stdin'], input=json.dumps(values).encode(),
                                 capture_output=True)
@@ -84,7 +88,9 @@ class RendererTests(unittest.TestCase):
         for instruction in ('ROUND1_INVENTORY.md', 'PREVIOUS_REVIEW.md',
                             'IMPLEMENTER_RESPONSE.md', 'REMEDIATION.patch',
                             'response-only', 'unchanged caller', 'named witness',
-                            'ROUND1-ESCAPE', 'UNAVAILABLE'):
+                            'ROUND1-ESCAPE', 'UNAVAILABLE', 'IMPLEMENTER_REDESIGN.md',
+                            'WITNESS_RESULTS.md', 'MISSED row', 'witness_obsolete',
+                            'excluding the path from the contract', 'two consecutive reviews'):
             with self.subTest(instruction=instruction):
                 self.assertIn(instruction, prompt)
         self.assertIn('SCOPE.json', prompt)

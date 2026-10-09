@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Consumer entrypoint: exact PR refs in a host clone, one persistent ledger per PR.
-# review-pr.sh REPOSITORY PR_NUMBER [1|2|auto|status|report|hunks] [EXECUTOR]
+# review-pr.sh REPOSITORY PR_NUMBER [1|2|auto|status|report|hunks|witnesses] [EXECUTOR]
+#   [--supplementary --granted-by WHO --budget N]
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONDONTWRITEBYTECODE=1

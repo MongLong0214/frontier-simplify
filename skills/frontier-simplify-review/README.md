@@ -22,13 +22,16 @@ scripts/review-round.sh report "$REPO" HEAD "$PR_ID"
 scripts/review-round.sh status "$REPO" "$HEAD" "$PR_ID" "$BASE" codex
 scripts/review-round.sh path "$REPO" HEAD "$PR_ID"
 scripts/review-round.sh hunks "$REPO" "$REMEDIATION_HEAD" "$PR_ID"
+scripts/review-round.sh witnesses "$REPO" "$REMEDIATION_HEAD" "$PR_ID"
+scripts/review-round.sh 2 "$REPO" "$REMEDIATION_HEAD" "$PR_ID" "$BASE" codex \
+  --supplementary --granted-by "$WHO" --budget 2
 ```
 
 Phase 1 reviews the change. Phase 2 checks the repair, the earlier findings, any later open findings,
 and remediation regressions. Actual attempt numbers are assigned under a per-PR lock. A follow-up
 requires the same base and a descendant of the original head. For unrelated work or changed scope,
 a fresh phase 1 consumes the same PR budget. **At most three attempts per stable PR** may start,
-including failures and interruptions. The per-PR lock protects the count; it is checked before
+including failures and interruptions; only a recorded supplementary grant (below) adds more. The per-PR lock protects the count; it is checked before
 creating another attempt or launching an executor. No head, response or phase change resets it.
 Legacy attempts count; a PR already over the limit immediately hands off without rewriting history.
 The third attempt is the last automatic review. Later calls report the preserved artifacts and
@@ -50,8 +53,10 @@ original-head..remediation-head diff. Reviewers must carry unresolved findings a
 | `10` from a review or cached review | Execution evidence recorded; read the review and make the merge decision through the existing review workflow. |
 | `11` from a review or cached review | Automatic review budget exhausted; human handoff. The third intact review and all later calls return this. It can contain BLOCKERs, gaps or an unreviewed requested head. |
 | `5` from a review | Valid invocation, but repository/ref, preparation, execution or evidence failed. The raw child exit/signal remains in its receipt. |
+| `12` from a follow-up | A contract invariant stayed open in two consecutive reviews and no new redesign was supplied. No attempt is reserved and no model runs; answer `REDESIGN-REQUIRED.md`. |
+| `13` from a follow-up or `witnesses` | A preserved reviewer witness fails on the requested head. No attempt is reserved and no model runs; finish the repair or name a wrong witness in `REVIEW_WITNESS_DISPUTED`. |
 | `2` | Command syntax or argument count is invalid; no attempt is reserved. |
-| `0` from help, `status`, `report`, `path` or `hunks` | The read-only utility completed. This is never a PR approval. |
+| `0` from help, `status`, `report`, `path`, `hunks` or a passing `witnesses` | The utility completed. This is never a PR approval. |
 
 **Review execution never returns 0, including a PASS recommendation and every stub run.** A shell
 caller that previously used exit 0 as a merge gate must stop doing so. Do not reinterpret exit 10 as
@@ -69,6 +74,46 @@ repair regressions and original blockers discovered later. Missing required evid
 PASS recommendation. Nits, prose formatting, catalog repetition and the exhausted budget cannot
 turn into a product blocker or close one. Humans assess requirements, coverage, severity, disputed
 reproductions, closure, and integration risk on the actual merge target.
+
+## Contracts, witnesses and supplementary reviews
+
+A contract defect is reported as one invariant, a producer/sink table and a stable key in a final
+`- invariant: KEY | family N | STATUS | sentence` line. The host carries every key's latest status
+and the attempts that reported it open into the next prompt so the reviewer reuses the key. If the
+same key is OPEN, ROUND1-ESCAPE or REGRESSION in the two latest recorded reviews, a follow-up returns
+`12` before reserving an attempt and writes `REDESIGN-REQUIRED.md` from the SKILL.md template.
+`REVIEW_REDESIGN` (or `pr-N-redesign.md` beside the PR adapter's response file) supplies the answer,
+frozen as `IMPLEMENTER_REDESIGN.md`; a redesign already reviewed while the key stayed open does not
+reopen review. A fresh phase 1 starts a new enumeration and is not held by this stop. The lines are
+read only to stop work. A reviewer that omits them stops nothing, and that absence is not convergence.
+A family-5 key that stays open while most new non-test code lines since the last review are
+conditionals or early exits adds an advisory repair-shape note; it blocks nothing.
+
+`review_evidence/` is created in each checkout. Files the reviewer writes there are copied to
+`round-NNNN/witnesses/` with a hashed `WITNESSES.json` (regular files only; links, dependency and
+cache directories, files over 1 MiB, and anything past 16 MiB or 200 files are listed as skipped).
+A witness is a top-level `review_evidence/<ID>.sh`, run as `bash` from the repository root: nonzero
+while the defect is present, 0 once it is fixed. Before a follow-up reserves an attempt, every active
+witness since the latest original review runs in a clean exact-head clone with the preserved files
+restored, `REVIEW_WITNESS_TIMEOUT` seconds each (default 300). Any FAIL, TIMEOUT or ERROR returns `13`.
+A tracked file at a witness's own path is an ERROR, never a substitute witness. `REVIEW_WITNESS_DISPUTED`
+lets named failing witnesses through, marked disputed for the reviewer. Passing results are frozen
+as `WITNESS_RESULTS.md` and the files are restored into the reviewer's checkout. A reviewer retires a
+witness with `- witness_obsolete: ID -- reason`; `report`, the results and the handoff keep the reason.
+Run logs stay under `witness-runs/` in the PR root. A pass shows that the script exited 0 on this
+head, not that the defect is closed or that the witness could have failed.
+
+The three automatic attempts are unchanged. After them, `--supplementary --granted-by WHO --budget N`
+runs more reviews of the same kind; the granter, budget and number are written into each such
+attempt's `started` record, so older readers still see an over-limit history and hand off. A grant
+while automatic attempts remain is refused. Every review prints `PR cumulative reviews k (automatic
+a/3, supplementary m/N granted by WHO), cumulative time T` before anything else, measured from the
+ledger's reservation and finish times. The last automatic attempt and the last granted review write
+`HANDOFF.md`: the latest and original review paths, tracked invariants, the witness ledger, any
+redesign and a decision request (redesign, shrink the contract, accept the risk and merge, or hold).
+The grant is a recorded cooperative limit, not access control. A review run outside the runner
+cannot be counted; when an implementer response cites finding IDs that no recorded review for the PR
+contains, the next prompt and stderr say so.
 
 ## Evidence and trust
 
@@ -130,7 +175,8 @@ interrupted v3 attempt can use an explicit retry only within the remaining budge
 `REVIEW_REQUIREMENTS`, `REVIEW_ROUTED`, `REVIEW_CATALOG`, `REVIEW_SUITE_STATUS` and `REVIEW_TOOL_NOTES`
 fill prompt inputs. `REVIEW_EXECUTOR` selects codex or claude; `REVIEW_CODEX_MODEL` optionally selects
 the model. Without an explicit base, phase 1 needs `REVIEW_TARGET_BRANCH`; phase 2 inherits its base.
-`REVIEW_RESPONSE` optionally names the implementer's separate response.
+`REVIEW_RESPONSE` optionally names the implementer's separate response, `REVIEW_REDESIGN` a redesign,
+and `REVIEW_WITNESS_DISPUTED` a comma-separated list of witnesses the implementer disputes.
 
 The runner sends values to `render-prompt.py` as an internal JSON object on stdin; the renderer's
 `KEY=VALUE` arguments remain available for existing callers. It freezes the rendered prompt file

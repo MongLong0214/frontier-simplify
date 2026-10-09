@@ -170,6 +170,40 @@ def evidence_available(checks, end, start):
                 c['ok'] for c in end.get('guards', []) if c['guard'] == 'checkout'))
 
 
+def budget(starts):
+    """Automatic attempts and granted supplementary reviews, counted apart."""
+    supplementary = [n for n, s in starts.items() if s.get('supplementary')]
+    grant = starts[supplementary[-1]]['supplementary'] if supplementary else None
+    return len(starts) - len(supplementary), len(supplementary), grant
+
+
+def elapsed(root):
+    """Seconds from each reservation to its finish. An unfinished attempt adds nothing."""
+    started, total = {}, 0.0
+    for e in read(root):
+        try:
+            at = datetime.fromisoformat(e['at'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if e['event'] == 'started':
+            started[e['round']] = at
+        elif e['event'] == 'finished' and e['round'] in started:
+            total += max(0.0, (at - started[e['round']]).total_seconds())
+    return total
+
+
+def cumulative(root, starts, grant=None):
+    """One line a person can read before deciding whether another review is worth it."""
+    automatic, supplementary, recorded_grant = budget(starts)
+    grant = grant or recorded_grant
+    granted = (f"{supplementary}/{grant['budget']} granted by {grant['granted_by']}" if grant
+               else f'{supplementary}, none granted')
+    seconds = int(elapsed(root))
+    return (f'PR cumulative reviews {len(starts)} (automatic {automatic}/{MAX_ROUNDS}, '
+            f'supplementary {granted}), cumulative time '
+            f'{seconds // 3600}h{seconds // 60 % 60:02}m{seconds % 60:02}s')
+
+
 def running(root):
     """Inspect the existing OS lock, without creating state or trusting a stale PID."""
     try:
@@ -214,11 +248,16 @@ def status(root, repo, head, base=None, context=None):
     freshness = 'FRESH' if same and available and end.get('fresh_at_finish', True) else 'STALE'
     print(f'{state} {freshness}: reviewed head {start["head_sha"]}; requested head {head}; '
           f'{n}/{MAX_ROUNDS} attempts' + ('; HANDOFF' if n >= MAX_ROUNDS else ''))
+    print(cumulative(root, starts))
     print(f'Artifact: {root / f"round-{n:04}" / "ARTIFACT.md"}')
     if end:
         print('Checkout observations: ' + observations_state(start, end))
     if end.get('freshness_reason') or end.get('reason'):
         print(end.get('freshness_reason') or end['reason'])
+    import followup  # imports this module; loaded only when asked
+    keys = followup.recurring(followup.recorded(root, starts, ends))
+    if keys:
+        print('REDESIGN_REQUIRED before another review: ' + ', '.join(keys))
 
 
 def audit(root, repo, progress=False):
@@ -371,15 +410,19 @@ def report(root, repo):
             print('  Legacy inventory detail was not recorded; inspect its artifact. No reason is inferred.')
     print(f'{len(starts)} attempts; {sum(bool(e.get("executed")) for e in ends.values())} executed. '
           'Safe merge completion is not measured by these receipts.')
-    print(f'Automatic review budget: {len(starts)}/{MAX_ROUNDS} attempts used; '
-          f'{max(0, MAX_ROUNDS - len(starts))} remaining. Failures and interruptions count.')
-    return starts, ends
+    automatic = budget(starts)[0]
+    print(f'Automatic review budget: {automatic}/{MAX_ROUNDS} attempts used; '
+          f'{max(0, MAX_ROUNDS - automatic)} remaining. Failures and interruptions count.')
+    print(cumulative(root, starts))
+    import followup  # imports this module; loaded only when asked
+    followup.summary(root, starts, ends, originals)
+    return starts, ends, originals
 
 
-def handoff(root, repo, head):
+def handoff(root, repo, head, reason='automatic review has stopped'):
     """A human-readable handoff; the preserved prose, never extracted statuses, carries findings."""
-    starts, ends = report(root, repo)
-    print(f'HANDOFF: requested head {head}; automatic review has stopped. No merge authorization.')
+    starts, ends, originals = report(root, repo)
+    print(f'HANDOFF: requested head {head}; {reason}. No merge authorization.')
     matching = [n for n, s in starts.items() if s['head_sha'] == head]
     if not matching:
         print('This head has not been reviewed. Earlier evidence is not a review of this head.')
@@ -387,3 +430,5 @@ def handoff(root, repo, head):
           'Keep unresolved findings, repair regressions and newly discovered original blockers. '
           'Assess closure and required product checks, then decide to merge, repair or split the change. '
           'A new head, phase-1 restart or changed response does not replenish this PR budget.')
+    import followup  # imports this module; loaded only when asked
+    print(f'Handoff document: {followup.write_handoff(root, head, starts, ends, originals, reason)}')

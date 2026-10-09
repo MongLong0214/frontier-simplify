@@ -22,8 +22,13 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('repository', nargs='?', default=os.environ.get('REVIEW_CONSUMER_REPO'))
     p.add_argument('pr', type=int)
-    p.add_argument('phase', choices=['1', '2', 'auto', 'status', 'report', 'hunks'], nargs='?', default='auto')
+    p.add_argument('phase', choices=['1', '2', 'auto', 'status', 'report', 'hunks', 'witnesses'],
+                   nargs='?', default='auto')
     p.add_argument('executor', nargs='?', default=os.environ.get('REVIEW_EXECUTOR', 'codex'))
+    p.add_argument('--supplementary', action='store_true',
+                   help='review beyond the automatic attempts, under an explicit recorded grant')
+    p.add_argument('--granted-by', default='', help='who granted the supplementary budget')
+    p.add_argument('--budget', type=int, help='supplementary reviews granted for this PR in total')
     a = p.parse_args()
     require(a.repository and a.pr > 0, 'consumer', 'repository and positive PR number are required')
     repo = Path(a.repository).resolve()
@@ -54,6 +59,9 @@ def main():
     response = Path(os.environ.get('REVIEW_RESPONSE', str(host / f'pr-{a.pr}-response.md')))
     if response.exists():
         os.environ['REVIEW_RESPONSE'] = str(response)
+    redesign = Path(os.environ.get('REVIEW_REDESIGN', str(host / f'pr-{a.pr}-redesign.md')))
+    if redesign.exists():
+        os.environ['REVIEW_REDESIGN'] = str(redesign)
     leads = [os.environ.get('REVIEW_CATALOG', '')]
     lessons = os.environ.get('REVIEW_LESSONS')
     if lessons:
@@ -66,8 +74,9 @@ def main():
             print(f'NOT_REVIEWED: requested head {head}; no local review history')
         else:
             response_bytes = response.read_bytes() if os.environ.get('REVIEW_RESPONSE') else None
+            redesign_bytes = redesign.read_bytes() if os.environ.get('REVIEW_REDESIGN') else None
             ledger.status(runner.root_for(mirror, str(a.pr)), mirror, head,
-                          context=review_context(SCRIPTS, a.executor, response_bytes))
+                          context=review_context(SCRIPTS, a.executor, response_bytes, redesign_bytes))
         return 0
     host.mkdir(parents=True, exist_ok=True)
     with (host / '.lock').open('a') as lock:
@@ -95,6 +104,9 @@ def main():
         os.environ['REVIEW_HISTORY'] = catalog.render(catalog.harvest(ledger_root))
         print('review-pr: project history supplied as leads, not standing obligations', file=sys.stderr)
     argv = [a.phase, str(mirror), head, str(a.pr), base, a.executor]
+    if a.supplementary or a.granted_by or a.budget is not None:
+        argv += ['--supplementary'] * a.supplementary + ['--granted-by', a.granted_by]
+        argv += ['--budget', str(a.budget)] if a.budget is not None else []
     print(f'review-pr: consumer host {host}', file=sys.stderr)
     def still_current():
         current = metadata_for_pr()

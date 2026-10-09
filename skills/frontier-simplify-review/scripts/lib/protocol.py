@@ -62,18 +62,22 @@ def protocol_sha256(scripts):
     return digest(b'\0'.join(parts))
 
 
-def review_context(scripts, executor, response):
+def review_context(scripts, executor, response, redesign=None):
     """Caller-selected inputs; generated PR history must not invalidate its own review."""
     values = {key: os.environ.get(key, default) for key, default in {
         'REVIEW_REQUIREMENTS': 'none', 'REVIEW_ROUTED': 'none', 'REVIEW_CATALOG': 'none',
         'REVIEW_SUITE_STATUS': 'UNKNOWN', 'REVIEW_TOOL_NOTES': 'none',
         'REVIEW_CODEX_MODEL': '', 'REVIEW_TARGET_OID': '', 'REVIEW_TIMEOUT': '1800',
+        'REVIEW_WITNESS_DISPUTED': '',
     }.items()}
-    return dict(inputs_sha256=digest(json.dumps(values, sort_keys=True).encode()),
-                response_sha256=digest(response) if response is not None else None,
-                protocol_sha256=protocol_sha256(scripts), executor=executor,
-                model=os.environ.get('REVIEW_CODEX_MODEL') or 'executor default',
-                model_revision='unknown')
+    context = dict(inputs_sha256=digest(json.dumps(values, sort_keys=True).encode()),
+                   response_sha256=digest(response) if response is not None else None,
+                   protocol_sha256=protocol_sha256(scripts), executor=executor,
+                   model=os.environ.get('REVIEW_CODEX_MODEL') or 'executor default',
+                   model_revision='unknown')
+    if redesign is not None:
+        context['redesign_sha256'] = digest(redesign)
+    return context
 
 
 
@@ -120,10 +124,13 @@ def hunk_markdown(rows):
 RECORDED = 10
 FAILED = 5
 HANDOFF = 11
+# Returned before any reservation or model launch; neither consumes an attempt.
+REDESIGN_REQUIRED = 12
+WITNESS_FAILING = 13
 MAX_ROUNDS = 3
 
 
-def review_exit(recorded, attempts=0):
+def review_exit(recorded, attempts=0, limit=MAX_ROUNDS):
     if not recorded:
         return FAILED
-    return HANDOFF if attempts >= MAX_ROUNDS else RECORDED
+    return HANDOFF if attempts >= limit else RECORDED
