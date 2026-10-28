@@ -25,6 +25,8 @@ from scope import build_scope, scope_bytes
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 SKILL = SCRIPTS.parent / 'SKILL.md'
+REPOSITORY_REVIEW_PATH = 'REVIEW.md'
+REPOSITORY_REVIEW_MAX_BYTES = 16_384
 
 
 def run(args, cwd=None, stdout=subprocess.PIPE, input=None):
@@ -45,6 +47,39 @@ def root_for(repo, pr):
 def freeze(path, data):
     with path.open('xb') as f:
         f.write(data)
+
+
+def repository_review_policy(repo, head):
+    """Return exact candidate REVIEW.md metadata, bytes and UTF-8 text, or None when absent."""
+    listing = git(repo, '--no-replace-objects', 'ls-tree', '--full-tree', '-z', head, '--',
+                  REPOSITORY_REVIEW_PATH, literal=True)
+    entries = [entry for entry in listing.split(b'\0') if entry]
+    if not entries:
+        return None
+    require(len(entries) == 1 and b'\t' in entries[0], 'review-policy',
+            'candidate REVIEW.md tree entry is ambiguous')
+    attributes, path = entries[0].split(b'\t', 1)
+    fields = attributes.split(b' ')
+    require(path == REPOSITORY_REVIEW_PATH.encode() and len(fields) == 3,
+            'review-policy', 'candidate REVIEW.md tree entry is malformed')
+    mode, kind, object_id = fields
+    require(kind == b'blob' and mode in {b'100644', b'100755'}, 'review-policy',
+            'candidate REVIEW.md must be a regular file')
+    content = git(repo, '--no-replace-objects', 'cat-file', 'blob', object_id.decode())
+    require(0 < len(content) <= REPOSITORY_REVIEW_MAX_BYTES, 'review-policy',
+            f'candidate REVIEW.md must contain 1..{REPOSITORY_REVIEW_MAX_BYTES} bytes')
+    try:
+        text = content.decode('utf-8')
+    except UnicodeDecodeError:
+        require(False, 'review-policy', 'candidate REVIEW.md must be valid UTF-8')
+    metadata = {
+        'schema_version': 1,
+        'path': REPOSITORY_REVIEW_PATH,
+        'revision': head,
+        'sha256': digest(content),
+        'bytes': len(content),
+    }
+    return metadata, content, text
 
 
 def copy_input(source, directory, name):
@@ -397,6 +432,21 @@ def main(argv=None, freshness_check=None, notices=()):
             freeze(d / 'DIFF.patch', git(repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', base, head))
             freeze(d / 'CHANGED.txt', git(repo, 'diff', '--no-renames', '--name-only', base, head))
             inputs += ['DIFF.patch', 'CHANGED.txt']
+            repository_policy = repository_review_policy(repo, head)
+            caller_requirements = os.environ.get('REVIEW_REQUIREMENTS', 'none')
+            if repository_policy is not None:
+                policy_metadata, policy_bytes, policy_text = repository_policy
+                metadata_json = json.dumps(policy_metadata, sort_keys=True)
+                freeze(d / 'REPOSITORY_REVIEW.md', policy_bytes)
+                freeze(d / 'REPOSITORY_REVIEW.json', (metadata_json + '\n').encode())
+                inputs += ['REPOSITORY_REVIEW.md', 'REPOSITORY_REVIEW.json']
+                requirement_sources = json.dumps({
+                    'additional_host_sources': (None if caller_requirements == 'none'
+                                                else caller_requirements),
+                    'repository_policy': {'content': policy_text, 'metadata': policy_metadata},
+                }, ensure_ascii=False, sort_keys=True)
+            else:
+                requirement_sources = caller_requirements
             budget = (f"supplementary review {supplementary + 1} of {grant['budget']} granted by "
                       f"{grant['granted_by']}, after {automatic} automatic attempts" if grant
                       else f'automatic attempt {n} of {MAX_ROUNDS}')
@@ -406,7 +456,7 @@ def main(argv=None, freshness_check=None, notices=()):
                       'ROUND1_HEAD_SHA': head if phase == 1 else start['round1_head_sha'],
                       'ROUND2_HEAD_SHA': head, 'TRUSTED_INVENTORY_SHA256': start.get('inventory_sha256', ''),
                       'INVENTORY_INTEGRITY_RESULT': 'VERIFIED',
-                      'REQUIREMENT_SOURCES_OR_NONE': os.environ.get('REVIEW_REQUIREMENTS', 'none'),
+                      'REQUIREMENT_SOURCES_OR_NONE': requirement_sources,
                       'KNOWN_ROUTED_OR_NONE': os.environ.get('REVIEW_ROUTED', 'none'),
                       'PROJECT_CLASS_CATALOG_OR_NONE': '\n\n'.join(filter(None, [
                           os.environ.get('REVIEW_CATALOG', 'none'), os.environ.get('REVIEW_HISTORY', '')])),

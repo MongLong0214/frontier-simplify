@@ -181,9 +181,18 @@ interrupted v3 attempt can use an explicit retry only within the remaining budge
 
 ## Host inputs and consumers
 
-`REVIEW_REQUIREMENTS`, `REVIEW_ROUTED`, `REVIEW_CATALOG`, `REVIEW_SUITE_STATUS` and `REVIEW_TOOL_NOTES`
-fill prompt inputs. `REVIEW_EXECUTOR` selects codex or claude; `REVIEW_CODEX_MODEL` optionally selects
-the model. Without an explicit base, phase 1 needs `REVIEW_TARGET_BRANCH`; phase 2 inherits its base.
+An optional top-level `REVIEW.md` in the exact candidate is the conventional repository-owned review
+policy. The runner reads its Git blob rather than the working tree, accepts only a nonempty regular
+UTF-8 file of at most 16 KiB, and freezes `REPOSITORY_REVIEW.md` plus
+`REPOSITORY_REVIEW.json` (path, revision, digest, and size) as hashed round inputs. A malformed or
+oversized declared policy fails input preparation; an absent file keeps existing consumers working.
+The prompt carries the policy and any `REVIEW_REQUIREMENTS` value in separately named fields of one
+host-owned JSON envelope. Candidate newlines and field-like labels therefore remain quoted data and
+cannot impersonate later host fields or certify the policy. `REVIEW_REQUIREMENTS` supplies those
+additional host-owned sources; `REVIEW_ROUTED`,
+`REVIEW_CATALOG`, `REVIEW_SUITE_STATUS` and `REVIEW_TOOL_NOTES` fill the other prompt inputs.
+`REVIEW_EXECUTOR` selects codex or claude; `REVIEW_CODEX_MODEL` optionally selects the model. Without
+an explicit base, phase 1 needs `REVIEW_TARGET_BRANCH`; phase 2 inherits its base.
 `REVIEW_RESPONSE` optionally names the implementer's separate response, `REVIEW_REDESIGN` a redesign,
 `REVIEW_WITNESS_DISPUTED` a comma-separated list of witnesses the implementer disputes, and
 `REVIEW_WITNESS_WRAPPER` a command prefix for running witnesses.
