@@ -320,10 +320,12 @@ if scope['input_kind'] == 'remediation':
     assert Path('REMEDIATION_HUNKS.md').read_bytes()
 assert not Path('SEAL.txt').exists()
 prompt = sys.stdin.buffer.read()
-assert b'SCOPE.json' in prompt and len(prompt) > 262144
+# A validator gets the same files plus the finder's answer, under its own shorter prompt.
+role = Path('CANDIDATE_REVIEW.md').is_file() and prompt.decode().split(' as its ', 1)[1].split('.', 1)[0]
+assert b'SCOPE.json' in prompt and (b'requirement-' * 8500 in prompt if role else len(prompt) > 262144)
 assert not any(k.startswith('REVIEW_') for k in os.environ)
 assert all(len(arg) < 1000 for arg in sys.argv[1:])
-Path(os.environ['TEST_LOG']).write_text(json.dumps({'paths': sorted(paths),
+Path(os.environ['TEST_LOG'] + (f'.{role}' if role else '')).write_text(json.dumps({'paths': sorted(paths),
     'prompt_sha256': hashlib.sha256(prompt).hexdigest(), 'scope_sha256': hashlib.sha256(scope_bytes).hexdigest(),
     'argv': sys.argv[1:]}))
 for row in [{'type':'item.completed','item':{'type':'command_execution','command':'cat SCOPE.json'}},
@@ -363,11 +365,16 @@ for row in [{'type':'item.completed','item':{'type':'command_execution','command
         second = review('2', repaired, self.head, 'remediation')
         self.assertEqual(second['paths'], sorted(['*.txt', 'a?.txt', ':(glob)*']))
         rounds = next(artifacts.glob('*/literal-integration'))
-        for number, observed in ((1, first), (2, second)):
+        for number, phase, observed in ((1, '1', first), (2, '2', second)):
             directory = rounds / f'round-{number:04}'
-            self.assertEqual(observed['prompt_sha256'], protocol.digest((directory / 'prompt.txt').read_bytes()))
-            self.assertEqual(observed['scope_sha256'], protocol.digest((directory / 'SCOPE.json').read_bytes()))
-            self.assertEqual(observed['argv'], ['exec', '--json', '-s', 'read-only', '-'])
+            for prefix in ('', 'refuter-', 'reproducer-'):
+                seen = observed if not prefix else json.loads(
+                    (root / f'observed-{phase}.json.{prefix[:-1]}').read_text())
+                self.assertEqual(seen['paths'], observed['paths'])
+                self.assertEqual(seen['prompt_sha256'],
+                                 protocol.digest((directory / f'{prefix}prompt.txt').read_bytes()))
+                self.assertEqual(seen['scope_sha256'], protocol.digest((directory / 'SCOPE.json').read_bytes()))
+                self.assertEqual(seen['argv'], ['exec', '--json', '-s', 'read-only', '-'])
         self.assertEqual(replay.replay(rounds, self.repo, self.base, repaired, io.StringIO()), 10)
 
     def test_conflicting_pathspec_environment_is_local(self):

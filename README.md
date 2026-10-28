@@ -143,23 +143,30 @@ skills/frontier-simplify-review/scripts/review-pr.sh "$CONSUMER_REPO" "$PR_NUMBE
   the requested commits; a moved or unavailable target leaves a preserved but stale result.
 - `report` reads local evidence without GitHub or fetches, showing the starting protocol fingerprint
   and freshness at finish. It announces evidence checks; historical freshness is not current PR state.
-- Executors time out after 1,800 seconds by default (`REVIEW_TIMEOUT` changes it). Timeout and
-  SIGINT/SIGTERM stop their process group and preserve the failed attempt.
-- Contract defects are reported as an invariant with a producer/sink table, enumerated once;
-  follow-ups verify that table instead of finding one more path per round. A defect that also
+- Each review is checked by two validators, a refuter and a reproducer, run in parallel over the
+  finder's whole answer without seeing each other's. Only a first review whose last line is exactly
+  `Validation candidates: NONE` skips them; the calling agent reads all three answers.
+- Executors time out after 1,800 seconds by default (`REVIEW_TIMEOUT` changes it; the validators
+  share one such deadline). Timeout and SIGINT/SIGTERM stop their process groups and preserve the
+  failed attempt.
+- Contract defects are reported as an invariant with the sites that share its cause, enumerated
+  once; follow-ups verify those sites instead of finding one more path per round. A defect that also
   exists at the base is classified, and one inside the change's new contract comes with the option
   of shrinking the contract.
 - Reviewer reproductions saved in `review_evidence/` are kept outside the checkout and rerun on the
   next head before any model starts. A failing witness returns the repair without using an attempt.
-- A contract invariant still open in two consecutive reviews stops the next review and asks for a
-  redesign instead; the template is rendered from the skill.
-- After the three automatic attempts, more review needs `--supplementary --granted-by WHO --budget N`.
-  Every round prints the PR's cumulative count and time, and a spent budget writes `HANDOFF.md`
-  asking for one decision.
+- A contract invariant still open in two consecutive reviews is noted as needing a structural
+  repair; the next review still runs.
+- After the three automatic attempts, more review needs a grant the calling task already holds:
+  `--supplementary --granted-by WHO --budget N`. Every round prints the PR's cumulative count and
+  time, and a spent budget writes `HANDOFF.md` with the calling agent's next action.
 
-Exit **10** means evidence recorded, **11** means the budget ended in a human handoff, and **5**
-means failed or stale evidence. **12** (redesign required) and **13** (a preserved witness fails)
-return before any reservation or model launch. None means approval. Three attempts bound automatic
+Exit **10** means a review was recorded, **11** means the budget ended, and **5** means failed or
+stale evidence, including a failed validator. **13** (a preserved witness fails) returns before any
+reservation or model launch; earlier runners also returned **12** for a recurring invariant. None
+means approval. The calling agent finishes from each result without waiting for a person: it
+repairs and re-reviews, continues its existing completion path when nothing blocking remains on the
+reviewed head, or ends the task as failed with the cause. Three attempts bound automatic
 repetition; they do not guarantee correct review, closed defects or a safe merge. Provider-side model
 revisions and unexposed executor defaults cannot be fingerprinted and remain unknown.
 

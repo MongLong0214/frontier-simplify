@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Follow-up stops: preserved witnesses, redesign requests and granted supplementary reviews."""
+"""Follow-ups: preserved witnesses, the two validators, recurrence notes and granted supplementary reviews."""
 import json
 import os
 from pathlib import Path
@@ -264,7 +264,7 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
           in (root('disputed') / 'round-0002/WITNESS_RESULTS.md').read_text())
     check('the-precheck-runs-witnesses-through-the-configured-wrapper', (t / 'wrapped-precheck').exists())
 
-    # --- redesign: the same open key twice stops the next review ------------------------------------
+    # --- recurrence: the same open key twice is guidance, and the next review proceeds ------------
     response = t / 'response.md'
     response.write_text('Removed the No reply path for ESCAPE-SUPP-15 and F-1.\n')
     stub(events, OPEN)
@@ -275,43 +275,106 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
     check('carried-invariant-and-unreceipted-id-reach-the-prompt',
           second.returncode == 10 and 'receipt-delivered | family 5 | OPEN in attempt 1' in prompt
           and 'ESCAPE-SUPP-15' in prompt and 'ESCAPE-SUPP-15' in second.stderr)
-    stopped = host('2', h3, 'r')
-    request = r / 'REDESIGN-REQUIRED.md'
-    check('recurring-key-returns-12-without-an-attempt',
-          stopped.returncode == 12 and len(ledger.audit(r, repo)[0]) == 2
-          and 'REDESIGN_REQUIRED receipt-delivered' in stopped.stderr)
-    check('redesign-request-renders-the-skill-template',
-          request.is_file() and 'receipt-delivered open in attempts 1, 2' in request.read_text()
-          and '## Single enforcement point' in request.read_text())
-    check('status-names-the-required-redesign',
-          'REDESIGN_REQUIRED before another review: receipt-delivered' in host('status', h3, 'r').stdout)
-    check('a-phase-1-restart-cannot-skip-the-redesign',
-          host('1', h3, 'r').returncode == 12 and len(ledger.audit(r, repo)[0]) == 2)
-    moved_base = subprocess.run([str(SCRIPTS / 'review-round.sh'), 'auto', str(repo), h3, 'r', h1, 'stub'],
-                                env=env, capture_output=True, text=True)
-    check('a-changed-base-cannot-skip-the-redesign',
-          moved_base.returncode == 12 and len(ledger.audit(r, repo)[0]) == 2)
     design = t / 'redesign.md'
     design.write_text('# Redesign\nOne certification point records provenance at the producer.\n')
     third = host('2', h3, 'r', REVIEW_REDESIGN=str(design))
+    note = 'receipt-delivered stayed open in two consecutive reviews'
+    check('a-recurring-key-is-noted-and-the-review-proceeds',
+          third.returncode == 11 and len(ledger.audit(r, repo)[0]) == 3 and note in third.stderr
+          and note in (r / 'round-0003/prompt.txt').read_text() and not (r / 'REDESIGN-REQUIRED.md').exists())
     check('supplied-redesign-is-frozen-for-the-reviewer',
-          third.returncode == 11 and (r / 'round-0003/IMPLEMENTER_REDESIGN.md').read_bytes() == design.read_bytes()
-          and ledger.read(r)[-3]['redesign_supplied'] is True)
-    check('the-automatic-limit-writes-a-decision-document',
-          (r / 'HANDOFF.md').is_file() and '## Decision requested' in (r / 'HANDOFF.md').read_text()
-          and '| receipt-delivered | 5 | OPEN | 3 | 1, 2, 3 |' in (r / 'HANDOFF.md').read_text())
+          (r / 'round-0003/IMPLEMENTER_REDESIGN.md').read_bytes() == design.read_bytes()
+          and [e for e in ledger.read(r) if e['event'] == 'started'][-1]['redesign_supplied'] is True)
+    handoff = (r / 'HANDOFF.md').read_text()
+    check('the-automatic-limit-hands-off-the-next-action',
+          '## Next action' in handoff and 'asks no one to answer' in handoff
+          and '## Decision requested' not in handoff and note in handoff
+          and '| receipt-delivered | 5 | OPEN | 3 | 1, 2, 3 |' in handoff
+          and 'The latest attempt, 3, recorded a review of the requested head; validators: refuter completed'
+          in handoff)
+    check('status-notes-the-recurrence', note in host('status', h3, 'r').stdout)
     grant = ['--supplementary', '--granted-by', 'maintainer', '--budget', '2']
-    again = host('2', h4, 'r', *grant, REVIEW_REDESIGN=str(design))
-    check('an-already-reviewed-redesign-does-not-reopen-review',
-          again.returncode == 12 and 'already reviewed' in again.stderr and len(ledger.audit(r, repo)[0]) == 3)
-    design.write_text('# Redesign\nA second design: one allow-list at the sink.\n')
     stub(events, OPEN.replace('| OPEN |', '| CLOSED |'))
-    fourth = host('2', h4, 'r', *grant, REVIEW_REDESIGN=str(design))
-    started = ledger.read(r)[-3]
-    check('a-new-redesign-runs-under-the-grant',
+    fourth = host('2', h4, 'r', *grant)
+    started = [e for e in ledger.read(r) if e['event'] == 'started'][-1]
+    check('a-grant-runs-a-supplementary-review-after-the-limit',
           fourth.returncode == 10 and started.get('supplementary') ==
           {'granted_by': 'maintainer', 'budget': 2, 'number': 1}
           and 'supplementary review 1 of 2 granted by maintainer' in (r / 'round-0004/prompt.txt').read_text())
+    stub(events, OPEN)
+    host('1', h1, 'rw', REVIEW_STUB_EVIDENCE=str(witness_dir))
+    host('2', h3, 'rw')
+    git(repo, 'switch', '-q', '--detach', h4)
+    regressed = commit(repo, {'a.txt': 'bug\n'}, 'regression')
+    git(repo, 'switch', '-q', '-')
+    blocked = host('2', regressed, 'rw')
+    check('a-recurring-key-does-not-bypass-a-failing-witness',
+          blocked.returncode == 13 and len(ledger.audit(root('rw'), repo)[0]) == 2
+          and note in host('status', regressed, 'rw').stdout)
+
+    # --- validators: two parallel checks of the finder's answer -------------------------------------
+    none_answer, empty = t / 'none.jsonl', t / 'empty.jsonl'
+    stub(none_answer, 'Read a.txt and its callers; no defect found.\n\nValidation candidates: NONE\n')
+    stub(empty, '')
+    skipped = host('1', h1, 'v-none', REVIEW_STUB=str(none_answer))
+    v = root('v-none') / 'round-0001'
+    check('an-empty-first-review-skips-the-validators',
+          skipped.returncode == 10 and not list(v.glob('refuter-*')) and not list(v.glob('reproducer-*'))
+          and 'review: validators: skipped' in skipped.stdout
+          and 'Validators: skipped' in host('status', h1, 'v-none').stdout)
+    for pr, text in (('v-absent', 'Read a.txt; no defect found.\n'),
+                     ('v-inexact', 'No defect.\nValidation candidates: NONE.\n'),
+                     ('v-early', 'Validation candidates: NONE\nF-1 NIT: a.txt wording.\n'),
+                     ('v-padded', 'No defect.\n  Validation candidates: NONE  \n')):
+        stub(t / f'{pr}.jsonl', text)
+        ran = host('1', h1, pr, REVIEW_STUB=str(t / f'{pr}.jsonl'))
+        d = root(pr) / 'round-0001'
+        check(f'{pr}-marker-runs-both-validators',
+              ran.returncode == 10 and 'refuter completed' in ran.stdout and 'reproducer completed' in ran.stdout
+              and all((d / f'{role}-{name}').is_file() for role in ledger.VALIDATORS
+                      for name in ('prompt.txt', 'ARTIFACT.md', 'executor-exit.txt')))
+    host('1', h1, 'v-follow')
+    follow = host('2', h3, 'v-follow', REVIEW_STUB=str(none_answer))
+    restart = host('1', h4, 'v-follow', REVIEW_STUB=str(none_answer))
+    vf = root('v-follow')
+    check('a-follow-up-or-restart-cannot-skip-the-validators',
+          follow.returncode == 10 and restart.returncode == 11
+          and all((vf / f'round-{n:04}' / f'{role}-ARTIFACT.md').is_file()
+                  for n in (2, 3) for role in ledger.VALIDATORS))
+    prior = (vf / 'round-0002/PRIOR_VALIDATION.md').read_text()
+    check('a-follow-up-freezes-the-earlier-validators',
+          'Original review, attempt 1: refuter completed, answer ROUND1_REFUTER.md' in prior
+          and (vf / 'round-0002/ROUND1_REFUTER.md').read_bytes()
+          == (vf / 'round-0001/refuter-ARTIFACT.md').read_bytes()
+          and (vf / 'round-0002/PREVIOUS_REPRODUCER.md').is_file())
+    unusable = host('1', h1, 'v-empty', REVIEW_STUB=str(empty))
+    check('an-unusable-finder-launches-no-validator',
+          unusable.returncode == 5 and not list((root('v-empty') / 'round-0001').glob('refuter-*'))
+          and "not run (the finder's review was not usable)" in unusable.stdout)
+    failed = host('1', h1, 'v-fail', REVIEW_STUB_REPRODUCER=str(empty))
+    vd = root('v-fail')
+    check('a-failed-validator-fails-the-attempt-and-keeps-the-finder',
+          failed.returncode == 5 and 'refuter completed' in failed.stdout and 'reproducer FAILED' in failed.stdout
+          and (vd / 'round-0001/ARTIFACT.md').read_text().startswith('F-1 BLOCKER')
+          and len(ledger.audit(vd, repo)[0]) == 1)
+    after = host('2', h3, 'v-fail')
+    prior = (vd / 'round-0002/PRIOR_VALIDATION.md').read_text() if after.returncode == 10 else ''
+    check('a-follow-up-builds-on-a-review-whose-validator-failed',
+          'reproducer FAILED' in prior and (vd / 'round-0002/ROUND1_REFUTER.md').is_file()
+          and not (vd / 'round-0002/ROUND1_REPRODUCER.md').exists())
+    other = t / 'validator-evidence'
+    other.mkdir()
+    (other / 'F-1.sh').write_text('exit 0\n')
+    (other / 'F-2.sh').write_text('! grep -q bug a.txt\n')
+    merged = host('1', h1, 'v-merge', REVIEW_STUB_EVIDENCE=str(witness_dir),
+                  REVIEW_STUB_REFUTER_EVIDENCE=str(other))
+    vm = root('v-merge') / 'round-0001'
+    manifest = json.loads((vm / 'WITNESSES.json').read_text()) if merged.returncode == 10 else {'skipped': []}
+    check('validator-witnesses-merge-without-replacing-the-finders',
+          (vm / 'witnesses/review_evidence/F-1.sh').read_bytes() == (witness_dir / 'F-1.sh').read_bytes()
+          and (vm / 'witnesses/review_evidence/F-2.sh').is_file()
+          and {'path': 'review_evidence/F-1.sh', 'reason': 'another reviewer of this attempt preserved this path'}
+          in manifest['skipped'])
 
     # --- supplementary budget -----------------------------------------------------------------------
     stub(events, 'F-1 BLOCKER: a.txt still says bug.\n')
@@ -334,14 +397,23 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
               'review: PR cumulative reviews 3 (automatic 3/3, supplementary 0/1 granted by maintainer), '
               'cumulative time '))
     handoff = (s / 'HANDOFF.md').read_text()
-    check('spent-grant-hands-off-with-a-decision-request',
+    check('spent-grant-hands-off-the-next-action',
           supplementary.returncode == 11 and 'supplementary budget of 1 granted by maintainer is spent' in handoff
-          and 'Shrink the contract' in handoff and 'Accept the risk and merge' in handoff
+          and '## Next action' in handoff and 'Accept the risk and merge' not in handoff
           and 'PR cumulative reviews 4 (automatic 3/3, supplementary 1/1 granted by maintainer)' in handoff)
     spent = host('2', h4, 's', *one)
     check('a-spent-grant-launches-nothing', spent.returncode == 11 and len(ledger.audit(s, repo)[0]) == 4)
     check('report-shows-the-cumulative-line',
           'supplementary 1/1 granted by maintainer' in host('report', h4, 's').stdout)
+    starts, ends, originals = ledger.audit(s, repo)
+    stale = {**ends, 4: dict(ends[4], recorded=True, fresh_at_finish=False,
+                             freshness_reason='SKILL.md changed during review')}
+    saved = (s / 'HANDOFF.md').read_bytes()
+    text = followup.write_handoff(s, starts[4]['head_sha'], starts, stale, originals, 'test').read_text()
+    (s / 'HANDOFF.md').write_bytes(saved)
+    check('a-stale-review-is-not-offered-as-complete',
+          'review inputs changed before it finished: SKILL.md changed during review' in text
+          and 'recorded a review of the requested head; validators' not in text)
     automatic, used, recorded_grant = ledger.budget(ledger.audit(s, repo)[0])
     check('budget-counts-automatic-and-supplementary-apart',
           (automatic, used, recorded_grant['granted_by']) == (3, 1, 'maintainer'))

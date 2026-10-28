@@ -57,7 +57,8 @@ def replay(root, repo, base, head, out):
             'replay-changed', 'preserved changed-file list differs from Git at the requested base..head')
     artifact = directory / 'ARTIFACT.md'
     print(f'Latest matching attempt: {latest}; artifact_sha256={digest(artifact.read_bytes())}', file=out)
-    print('Exit 10: evidence available for human assessment, including any BLOCK or coverage gaps.', file=out)
+    print('Exit 10: evidence available for the calling agent to assess, including any BLOCK or coverage gaps.',
+          file=out)
     return review_exit(True)
 
 

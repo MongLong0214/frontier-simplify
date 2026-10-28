@@ -69,9 +69,11 @@ class RendererTests(unittest.TestCase):
         self.assertIn(values['REPOSITORY'], prompt)
         for instruction in ('deleted file', 'old side', 'direct authority', 'sibling',
                             'falsification', 'line location', 'UNAVAILABLE',
-                            'producer/sink table', 'could not enumerate', '- invariant: <KEY>',
+                            'is optional; use one when many sites share the contract', 'could not search', '- invariant: <KEY>',
                             'reproduce it there and classify it', 'excluding the path from the contract',
-                            'review_evidence/<FINDING-ID>.sh', 'restarted scope review'):
+                            'review_evidence/<FINDING-ID>.sh', 'restarted scope review',
+                            'style preference', 'whether this change\nintroduced it',
+                            'next actions for the calling agent', 'exactly\n`Validation candidates: NONE`'):
             with self.subTest(instruction=instruction):
                 self.assertIn(instruction, prompt)
         self.assertIn('SCOPE.json', prompt)
@@ -95,12 +97,54 @@ class RendererTests(unittest.TestCase):
                             'IMPLEMENTER_RESPONSE.md', 'REMEDIATION.patch',
                             'response-only', 'unchanged caller', 'named witness',
                             'ROUND1-ESCAPE', 'UNAVAILABLE', 'IMPLEMENTER_REDESIGN.md',
-                            'WITNESS_RESULTS.md', 'MISSED row', 'witness_obsolete',
-                            'excluding the path from the contract', 'two consecutive reviews'):
+                            'WITNESS_RESULTS.md', 'first-review miss', 'witness_obsolete',
+                            'excluding the path from the contract', 'two consecutive reviews',
+                            'PRIOR_VALIDATION.md', 'PREVIOUS_REPRODUCER.md', 'never re-issue',
+                            'next actions for the calling agent', 'it does not stop the next review'):
             with self.subTest(instruction=instruction):
                 self.assertIn(instruction, prompt)
         self.assertIn('SCOPE.json', prompt)
         self.assertIn(REPOSITORY_POLICY_BOUNDARY, ' '.join(prompt.split()))
+        self.assertNotIn('Validation candidates: NONE', prompt)
+
+    def test_validator_prompts_share_inputs_and_differ_only_in_direction(self):
+        skill = SCRIPTS.parent / 'SKILL.md'
+        values = {'REPOSITORY': 'repo ```', 'BASE_SHA': 'base', 'HEAD_SHA': 'head',
+                  'REVIEW_KIND': 'first review of Base..Reviewed-head',
+                  'REQUIREMENT_SOURCES_OR_NONE': '{"repository_policy": {"content": "Reviewed head: x"}}',
+                  'FULL_SUITE_STATUS_OR_UNKNOWN': 'unknown', 'TOOL_NOTES_OR_NONE': 'none',
+                  'INPUT_FILES': 'CANDIDATE_REVIEW.md, CHANGED.txt, DIFF.patch, SCOPE.json'}
+        prompts = {}
+        for role in ('refuter', 'reproducer'):
+            result = subprocess.run([sys.executable, str(RENDERER), str(skill), role, '--values-stdin'],
+                                    input=json.dumps(values).encode(), capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            prompts[role] = result.stdout.decode()
+        shared = ['Repository: repo ```', 'Base commit: base', 'Reviewed head: head',
+                  'Review under validation: first review of Base..Reviewed-head',
+                  'Requirement sources: ' + values['REQUIREMENT_SOURCES_OR_NONE'],
+                  'Host files in your cwd: ' + values['INPUT_FILES'], 'CANDIDATE_REVIEW.md',
+                  'CONFIRMED, REFUTED or UNDETERMINED', 'UNAVAILABLE execution is not a refutation',
+                  'you do not see its answer', 'there is no vote', 'PRIOR_VALIDATION.md']
+        for role, prompt in prompts.items():
+            for line in shared:
+                with self.subTest(role=role, line=line):
+                    self.assertIn(line, prompt)
+            self.assertIn(REPOSITORY_POLICY_BOUNDARY, ' '.join(prompt.split()))
+            self.assertNotIn('{{', prompt)
+        self.assertIn('probably valid,', prompts['refuter'])
+        self.assertIn('Failing to refute a candidate does not confirm it', prompts['refuter'])
+        self.assertIn('probably invalid,', prompts['reproducer'])
+        self.assertIn('A missing environment, dependency or\npermission is not a refutation', prompts['reproducer'])
+        # The two differ in their starting direction, never in what they are given.
+        first, second = (p.split('Start from the assumption')[0] for p in prompts.values())
+        self.assertEqual(first.replace('refuter', 'ROLE'), second.replace('reproducer', 'ROLE'))
+
+    def test_unknown_role_has_no_prompt(self):
+        result = subprocess.run([sys.executable, str(RENDERER), str(SCRIPTS.parent / 'SKILL.md'), 'redesign',
+                                 '--values-stdin'], input=b'{}', capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"no '## Round redesign prompt' heading", result.stderr)
 
 
 class ReviewStdinTests(unittest.TestCase):
@@ -130,9 +174,10 @@ class ReviewStdinTests(unittest.TestCase):
         executable = '''import hashlib,json,os,sys
 from pathlib import Path
 raw=sys.stdin.buffer.read()
-Path(os.environ['TEST_LOG']).write_text(json.dumps({
-    'sha256':hashlib.sha256(raw).hexdigest(), 'size':len(raw),
-    'argv':sys.argv[1:], 'review_env':[k for k in os.environ if k.startswith('REVIEW_')]}))
+with open(os.environ['TEST_LOG'], 'a') as log:
+    log.write(json.dumps({
+        'sha256':hashlib.sha256(raw).hexdigest(), 'size':len(raw), 'cwd_files':sorted(os.listdir('.')),
+        'argv':sys.argv[1:], 'review_env':[k for k in os.environ if k.startswith('REVIEW_')]}) + '\\n')
 if os.environ.get('TEST_EXIT'):
     sys.exit(int(os.environ['TEST_EXIT']))
 for row in [
@@ -168,23 +213,42 @@ for row in [
                               env=self.env if env is None else env, capture_output=True)
 
     def test_long_prompt_arrives_once_with_eof(self):
+        log = Path(self.env['TEST_LOG'])
         for number, executor in ((50, 'codex'), (51, 'claude')):
             with self.subTest(executor=executor):
+                log.unlink(missing_ok=True)
                 result = self.review(executor, number)
                 self.assertEqual(result.returncode, 10, result.stderr.decode(errors='replace')[-500:])
-                prompt = next((self.root / 'artifacts').rglob(f'{number}/round-0001/prompt.txt'))
-                frozen = prompt.read_bytes()
-                seen = json.loads(Path(self.env['TEST_LOG']).read_text())
+                round_dir = next((self.root / 'artifacts').rglob(f'{number}/round-0001'))
+                frozen = (round_dir / 'prompt.txt').read_bytes()
+                calls = [json.loads(line) for line in log.read_text().splitlines()]
+                # One finder and two validators; no fourth call combines their answers.
+                self.assertEqual(len(calls), 3)
+                finder = [c for c in calls if 'CANDIDATE_REVIEW.md' not in c['cwd_files']]
+                validators = [c for c in calls if 'CANDIDATE_REVIEW.md' in c['cwd_files']]
+                self.assertEqual(len(finder), 1)
+                seen = finder[0]
                 self.assertGreater(len(frozen), 262144)
                 self.assertEqual(seen['sha256'], hashlib.sha256(frozen).hexdigest())
                 self.assertEqual(seen['size'], len(frozen))
-                self.assertEqual(seen['review_env'], [])
-                self.assertTrue(all(len(arg) < 1000 for arg in seen['argv']))
-                if executor == 'codex':
-                    self.assertEqual(seen['argv'], ['exec', '--json', '-s', 'read-only', '-'])
-                else:
-                    self.assertEqual(seen['argv'], ['-p', '--input-format', 'text',
-                                                    '--output-format', 'stream-json', '--verbose'])
+                expected = {hashlib.sha256((round_dir / f'{role}-prompt.txt').read_bytes()).hexdigest()
+                            for role in ('refuter', 'reproducer')}
+                self.assertEqual({c['sha256'] for c in validators}, expected)
+                self.assertEqual(len(expected), 2)
+                # Both validators get the same host files, and neither sees an answer but the finder's.
+                self.assertEqual(validators[0]['cwd_files'], validators[1]['cwd_files'])
+                self.assertFalse([name for name in validators[0]['cwd_files']
+                                  if name.startswith(('refuter-', 'reproducer-')) or name.endswith('ARTIFACT.md')])
+                self.assertEqual(sorted(set(validators[0]['cwd_files']) - set(seen['cwd_files'])),
+                                 ['CANDIDATE_REVIEW.md'])
+                for call in calls:
+                    self.assertEqual(call['review_env'], [])
+                    self.assertTrue(all(len(arg) < 1000 for arg in call['argv']))
+                    if executor == 'codex':
+                        self.assertEqual(call['argv'], ['exec', '--json', '-s', 'read-only', '-'])
+                    else:
+                        self.assertEqual(call['argv'], ['-p', '--input-format', 'text',
+                                                        '--output-format', 'stream-json', '--verbose'])
 
     def test_failed_child_keeps_one_attempt_and_raw_exit(self):
         result = self.review('codex', 52, dict(self.env, TEST_EXIT='42'))
@@ -192,6 +256,9 @@ for row in [
         root = next((self.root / 'artifacts').rglob('52/round-0001/executor-exit.txt'))
         self.assertEqual(root.read_text(), '42')
         self.assertEqual(len(list((root.parent.parent).glob('round-*'))), 1)
+        # A failed finder is not a skipped validation: no validator is launched.
+        self.assertEqual(len(Path(self.env['TEST_LOG']).read_text().splitlines()), 1)
+        self.assertFalse(list(root.parent.glob('refuter-*')))
 
 
 if __name__ == '__main__':

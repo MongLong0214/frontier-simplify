@@ -509,14 +509,30 @@ with tempfile.TemporaryDirectory(prefix='review-tests-') as temp:
     fake_codex.write_text('#!' + sys.executable + '\n' + '''
 import json, os, signal, subprocess, sys, time
 from pathlib import Path
-mode = os.environ.get('TEST_EXECUTOR_MODE', '')
+# A validator's cwd holds the finder's answer; TEST_VALIDATOR_MODE drives the validators alone.
+role = Path('CANDIDATE_REVIEW.md').is_file() and sys.stdin.read().split(' as its ', 1)[1].split('.', 1)[0]
+mode = os.environ.get('TEST_VALIDATOR_MODE' if role else 'TEST_EXECUTOR_MODE', '')
+def ready(*pids):
+    # Whole or absent: the test reads the file as soon as it exists.
+    path = os.environ['TEST_READY'] + (f'.{role}' if role else '')
+    Path(path + '.tmp').write_text(json.dumps([*pids, os.getcwd()]))
+    os.replace(path + '.tmp', path)
+if mode == 'refuter-done':
+    # The refuter answers and keeps a witness; the reproducer is still running when cancelled.
+    mode = 'wait' if role == 'reproducer' else ''
+    if role == 'refuter':
+        Path('review_evidence/refuter.txt').write_text('refuter witness')
+        sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
+        sys.stdout.flush()
+        ready(os.getpid(), os.getpid())
+        sys.exit(0)
 if mode == 'exit1':
     sys.exit(1)
 elif mode == 'sigkill':
     os.kill(os.getpid(), signal.SIGKILL)
 elif mode == 'wait':
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
-    Path(os.environ['TEST_READY']).write_text(json.dumps([os.getpid(), child.pid, os.getcwd()]))
+    ready(os.getpid(), child.pid)
     time.sleep(60)
 elif mode == 'head':
     subprocess.run(['git', '-C', os.environ['TEST_REPO'], 'update-ref',
@@ -605,6 +621,63 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
             check(label + '-leftover-lock-does-not-claim-running', True,
                   lambda: after_status.returncode == 0 and 'FAILED' in after_status.stdout
                   and 'RUNNING' not in after_status.stdout and (root_for(label) / '.lock').exists())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+    # The validators are real children too: one shared deadline, and cancellation stops both.
+    def validators_ready(process):
+        paths = [Path(f'{ready}.{role}') for role in ledger.VALIDATORS]
+        until = time.monotonic() + 30
+        while time.monotonic() < until and process.poll() is None and not all(p.exists() for p in paths):
+            time.sleep(0.02)
+        require(all(p.exists() for p in paths), 'test-ready', 'fake validators did not start')
+        return [json.loads(p.read_text()) for p in paths]
+    for label, timeout, sig in [('validator-timeout', '3', None), ('validator-sigterm', '60', signal.SIGTERM)]:
+        for role in ledger.VALIDATORS:
+            Path(f'{ready}.{role}').unlink(missing_ok=True)
+        runenv = dict(liveenv, TEST_VALIDATOR_MODE='refuter-done' if sig else 'wait', TEST_READY=str(ready),
+                      REVIEW_TIMEOUT=timeout)
+        proc = subprocess.Popen([str(SCRIPTS / 'review-round.sh'), '1', str(repo), h1,
+                                 label, base, 'codex'], env=runenv,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            seen = validators_ready(proc)
+            if sig:
+                until = time.monotonic() + 10
+                while not stopped(seen[0][0]) and time.monotonic() < until:
+                    time.sleep(0.02)
+                proc.send_signal(sig)
+            stdout, stderr = proc.communicate(timeout=30)
+            rows = ledger.read(root_for(label))
+            first = root_for(label) / 'round-0001'
+            check(label + '-records-one-failure-and-cleans-both-validators', True,
+                  lambda: proc.returncode == 5 and len(rows) == 3 and not rows[-1]['recorded']
+                  and len({checkout for _, _, checkout in seen}) == 2
+                  and all(stopped(pid) for parent, child, _ in seen for pid in (parent, child))
+                  and not any(Path(checkout).exists() for _, _, checkout in seen)
+                  and (first / 'ARTIFACT.md').read_text().startswith('# Round 1 review inventory'))
+            if sig:
+                cached = cmd(SCRIPTS / 'review-round.sh', 'auto', repo, h1, label, base, 'codex', env=runenv)
+                check(label + '-cached-failure-is-not-rerun', True,
+                      lambda: cached.returncode == 5 and len(ledger.read(root_for(label))) == 3)
+                check(label + '-ends-as-cancelled-and-keeps-the-finished-answer-and-witness', True,
+                      lambda: rows[-1]['reason'] == 'review interrupted by SIGTERM'
+                      and (first / 'refuter-executor-exit.txt').read_text() == '0'
+                      and (first / 'refuter-ARTIFACT.md').read_bytes() == (first / 'ARTIFACT.md').read_bytes()
+                      and {'refuter-ARTIFACT.md', 'reproducer-executor-exit.txt', 'WITNESSES.json'}
+                      <= rows[-1]['outputs'].keys()
+                      and [item['path'] for item in json.loads((first / 'WITNESSES.json').read_text())['files']]
+                      == ['review_evidence/refuter.txt'])
+            else:
+                check(label + '-names-each-validator-that-timed-out', True,
+                      lambda: rows[-1]['reason'] == 'the refuter timed out after 3s; the reproducer timed out after 3s'
+                      and 'refuter FAILED' in stdout and 'reproducer FAILED' in stdout
+                      and 'preflight' not in ledger.guard_rejections({1: rows[-1]}))
+                follow = cmd(SCRIPTS / 'review-round.sh', '2', repo, h2, label, base, 'stub', env=env)
+                check(label + '-keeps-the-finder-for-the-follow-up', True,
+                      lambda: follow.returncode == 10 and 'Original review, attempt 1: refuter FAILED'
+                      in (root_for(label) / 'round-0002/PRIOR_VALIDATION.md').read_text())
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -750,7 +823,7 @@ sys.stdout.write(Path(os.environ['TEST_EVENTS']).read_text())
         poll_config.write_text(json.dumps({'consumers': [{'repository': str(repo), 'lessons': str(lessons)}]}))
         metadata.write_text('[{"number":42}]')
         poll_env = dict(prenv, REVIEW_CONSUMERS_CONFIG=str(poll_config), TEST_LESSON_PATH=str(poller / 'received'))
-        for child, expected in [(10, 0), (11, 0), (5, 1), (0, 1)]:
+        for child, expected in [(10, 0), (11, 0), (13, 0), (12, 1), (5, 1), (0, 1)]:
             check(f'poller-classifies-child-{child}', True,
                   lambda child=child, expected=expected: cmd(sys.executable, poller / 'dogfood/run.py',
                       env=dict(poll_env, TEST_CHILD_STATUS=str(child))).returncode == expected)

@@ -58,7 +58,8 @@ if scope['input_kind'] == 'remediation':
     assert all(Path(name).exists() for name in ('ROUND1_INVENTORY.md', 'PREVIOUS_REVIEW.md',
         'IMPLEMENTER_RESPONSE.md', 'REMEDIATION.patch', 'REMEDIATION_CHANGED.txt',
         'REMEDIATION_HUNKS.md'))
-Path(os.environ['TEST_LOG']).write_text(json.dumps({'scope': scope, 'scope_bytes': scope_bytes.decode(),
+if not Path('CANDIDATE_REVIEW.md').exists():  # the finder's call; the validators run after it
+  Path(os.environ['TEST_LOG']).write_text(json.dumps({'scope': scope, 'scope_bytes': scope_bytes.decode(),
     'remediation_patch': Path('REMEDIATION.patch').read_text() if scope['input_kind'] == 'remediation' else None,
     'prompt': sys.stdin.buffer.read().decode()}))
 if os.environ.get('TEST_TAMPER'):
