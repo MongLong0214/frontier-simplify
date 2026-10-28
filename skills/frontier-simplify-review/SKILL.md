@@ -317,11 +317,13 @@ in two consecutive reviews is reported as needing a structural repair; the revie
 The calling agent ends every loop without waiting for a person. On the runner's exit status:
 
 - `10`, recorded: read the finder's review, each validator answer that ran (or the reason they were
-  skipped) and the required checks. Repair, refute or mark findings nonblocking, then run the
-  focused follow-up. An exit status, a PASS string or two agreeing validators never completes the
-  task alone.
-- `11`, budget spent: when the latest review covers the exact requested head, its validators
-  completed or were skipped, no blocking finding remains unresolved and the required checks pass,
+  skipped) and the required checks. When nothing blocking remains on the exact reviewed head and
+  the required checks pass, continue the existing completion path. Otherwise repair, refute or mark
+  findings nonblocking and run the focused follow-up on the repaired head or with the response;
+  rerunning with unchanged inputs only returns the same cached result. An exit status, a PASS string
+  or two agreeing validators never completes the task alone.
+- `11`, budget spent: when `status` shows the latest review RECORDED FRESH for the exact requested
+  head, its validators completed or were skipped, no blocking finding remains unresolved and the required checks pass,
   continue the existing completion path; the last attempt's result counts. Otherwise end the task
   as failed, naming the unresolved finding, the missing evidence or the unreviewed head.
 - `13`, failing witness: fix the failure, or name a witness shown to be wrong in

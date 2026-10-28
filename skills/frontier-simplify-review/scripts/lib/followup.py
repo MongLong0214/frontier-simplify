@@ -229,6 +229,9 @@ def write_handoff(root, head, starts, ends, originals, reason):
     elif starts[latest]['head_sha'] != head:
         state = (f'The requested head has not been reviewed: the latest attempt, {latest}, reviewed '
                  f"{starts[latest]['head_sha']}.")
+    elif end.get('fresh_at_finish') is False:
+        state = (f'The latest attempt, {latest}, recorded a review of the requested head, but its '
+                 f"review inputs changed before it finished: {end.get('freshness_reason') or 'stale'}.")
     elif not end.get('recorded', end.get('accepted')):
         failures = [c['reason'] for c in end.get('guards', []) if not c['ok']]
         cause = end.get('reason') or (failures[0] if failures else 'it did not finish')
@@ -239,7 +242,7 @@ def write_handoff(root, head, starts, ends, originals, reason):
                  + ledger.validators_state(root / f'round-{latest:04}', starts[latest], end) + '.')
     lines += ['', '## Next action', '', state, '',
               'The calling agent decides this from the code and evidence; it asks no one to answer:', '',
-              '- When the latest attempt recorded a review of the requested head with its validators completed '
+              '- When the latest attempt recorded a fresh review of the requested head with its validators completed '
               'or skipped, read it and every validator answer. If no blocking finding remains unresolved and '
               'the required checks pass, continue the existing completion path; the last attempt counts.',
               '- Otherwise end the task as failed, naming the unreviewed head, the failed attempt or the '

@@ -193,6 +193,9 @@ def executor_command(executor):
     raise Rejected('GUARD FAIL [executor] use codex, claude, or stub')
 
 
+CANCEL_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+
+
 def stop(child):
     # A timeout, cancellation or exited parent must not leave its tool
     # children writing into a checkout that is about to be removed.
@@ -208,64 +211,89 @@ def run_validators(d, repo, head, executor, env, timeout, installed, overlay, va
 
     Each gets its own fresh checkout with the finder's inputs, the answer as CANDIDATE_REVIEW.md
     and the witnesses so far; neither sees the other's answer, and no further model combines
-    them. Returns notes on validators that timed out or could not start.
+    them. Returns notes on validators that could not be prepared or start or timed out; the attempt
+    then fails on its validator checks while the finder's review stays usable. On every path,
+    interruption included, every validator is stopped and what it wrote is kept before the
+    checkouts go.
     """
     names = sorted([*installed, 'CANDIDATE_REVIEW.md'])
-    for role in ledger.VALIDATORS:
-        rendered = run([sys.executable, SCRIPTS / 'lib/render-prompt.py', SKILL, role, '--values-stdin'],
-                       input=json.dumps(dict(values, INPUT_FILES=', '.join(names)),
-                                        ensure_ascii=False).encode('utf-8'))
-        require(rendered.returncode == 0, 'prompt', rendered.stderr.decode().strip())
-        freeze(d / f'{role}-prompt.txt', rendered.stdout)
     clones, witnesses, children, notes = {}, {}, {}, []
-    for role in ledger.VALIDATORS:
-        clone = clones[role] = disposable_checkout(repo, head, owned)
-        for name in installed:
-            copy_input(d / name, clone, name)
-        copy_input(d / 'ARTIFACT.md', clone, 'CANDIDATE_REVIEW.md')
-        witnesses[role], prepared_notes = evidence.prepare(clone, overlay)
-        for note in prepared_notes:
-            print(f'review: {role}: {note}', file=sys.stderr)
-    with contextlib.ExitStack() as files:
-        try:
-            for role, clone in clones.items():
-                if executor == 'stub':
-                    # Stands in for each validator; REVIEW_STUB is the fallback answer.
-                    shutil.copyfile(os.environ.get(f'REVIEW_STUB_{role.upper()}') or os.environ['REVIEW_STUB'],
-                                    d / f'{role}-events.jsonl')
-                    stub_evidence = os.environ.get(f'REVIEW_STUB_{role.upper()}_EVIDENCE')
-                    if stub_evidence and witnesses[role] is not None:
-                        shutil.copytree(stub_evidence, clone / evidence.EVIDENCE, dirs_exist_ok=True)
-                    (d / f'{role}-executor.err').write_text('test fixture executor\n')
-                    (d / f'{role}-executor-exit.txt').write_text('0')
-                    continue
-                out = files.enter_context((d / f'{role}-events.jsonl').open('wb'))
-                err = files.enter_context((d / f'{role}-executor.err').open('wb'))
-                prompt = files.enter_context((d / f'{role}-prompt.txt').open('rb'))
-                try:
-                    children[role] = subprocess.Popen(executor_command(executor), cwd=clone, stdout=out,
-                                                      stderr=err, stdin=prompt, env=env,
-                                                      start_new_session=True)
-                except OSError as error:
-                    notes.append(f'the {role} could not start: {type(error).__name__}')
-            deadline = time.monotonic() + timeout
-            for role, child in children.items():
-                try:
-                    child.wait(timeout=max(0.0, deadline - time.monotonic()))
-                except subprocess.TimeoutExpired:
-                    notes.append(f'the {role} timed out after {timeout:g}s')
-        finally:
-            for role, child in children.items():
-                stop(child)
-                (d / f'{role}-executor-exit.txt').write_text(str(child.returncode))
-    for role, clone in clones.items():
-        try:
-            evidence.collect(clone, d, witnesses[role])
-        except (Rejected, OSError, ValueError) as e:
-            print(f'review: {role} witnesses not preserved: {e}', file=sys.stderr)
-        if (d / f'{role}-events.jsonl').is_file():
-            answer = run([sys.executable, SCRIPTS / 'lib/extract.py', d / f'{role}-events.jsonl', '--final'])
-            freeze(d / f'{role}-ARTIFACT.md', answer.stdout)
+    # Signals wait while the validators run: a cancellation is taken only where it can stop every
+    # child, keep every answer and then end the attempt as cancelled.
+    signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    cancel = None
+    try:
+        with contextlib.ExitStack() as files:
+            try:
+                for role in ledger.VALIDATORS:
+                    rendered = run([sys.executable, SCRIPTS / 'lib/render-prompt.py', SKILL, role, '--values-stdin'],
+                                   input=json.dumps(dict(values, INPUT_FILES=', '.join(names)),
+                                                    ensure_ascii=False).encode('utf-8'))
+                    require(rendered.returncode == 0, 'prompt', rendered.stderr.decode().strip())
+                    freeze(d / f'{role}-prompt.txt', rendered.stdout)
+                for role in ledger.VALIDATORS:
+                    clone = clones[role] = disposable_checkout(repo, head, owned)
+                    for name in installed:
+                        copy_input(d / name, clone, name)
+                    copy_input(d / 'ARTIFACT.md', clone, 'CANDIDATE_REVIEW.md')
+                    witnesses[role], prepared_notes = evidence.prepare(clone, overlay)
+                    for note in prepared_notes:
+                        print(f'review: {role}: {note}', file=sys.stderr)
+                for role, clone in clones.items():
+                    if executor == 'stub':
+                        # Stands in for each validator; REVIEW_STUB is the fallback answer.
+                        shutil.copyfile(os.environ.get(f'REVIEW_STUB_{role.upper()}') or os.environ['REVIEW_STUB'],
+                                        d / f'{role}-events.jsonl')
+                        stub_evidence = os.environ.get(f'REVIEW_STUB_{role.upper()}_EVIDENCE')
+                        if stub_evidence and witnesses[role] is not None:
+                            shutil.copytree(stub_evidence, clone / evidence.EVIDENCE, dirs_exist_ok=True)
+                        (d / f'{role}-executor.err').write_text('test fixture executor\n')
+                        (d / f'{role}-executor-exit.txt').write_text('0')
+                        continue
+                    out = files.enter_context((d / f'{role}-events.jsonl').open('wb'))
+                    err = files.enter_context((d / f'{role}-executor.err').open('wb'))
+                    prompt = files.enter_context((d / f'{role}-prompt.txt').open('rb'))
+                    try:
+                        children[role] = subprocess.Popen(
+                            executor_command(executor), cwd=clone, stdout=out, stderr=err, stdin=prompt,
+                            env=env, start_new_session=True,
+                            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_UNBLOCK, CANCEL_SIGNALS))
+                    except OSError as error:
+                        notes.append(f'the {role} could not start: {type(error).__name__}')
+                deadline = time.monotonic() + timeout
+                for role, child in children.items():
+                    while child.poll() is None and cancel is None:
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            notes.append(f'the {role} timed out after {timeout:g}s')
+                            break
+                        pending = signal.sigpending() & set(CANCEL_SIGNALS)
+                        if pending:
+                            cancel = signal.sigwait(pending)  # returns at once: it is pending
+                        else:
+                            time.sleep(min(left, 0.05))
+                    if cancel is not None:
+                        break
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError) as e:
+                # An interruption (InterruptedError) is also an OSError; the caller ends it as cancelled.
+                notes.append('the validators stopped: ' + (str(e).replace('\n', '; ') or type(e).__name__))
+            finally:
+                for role, child in children.items():
+                    stop(child)
+                    (d / f'{role}-executor-exit.txt').write_text(str(child.returncode))
+        for role, clone in clones.items():
+            try:
+                evidence.collect(clone, d, witnesses.get(role))
+            except (Rejected, OSError, ValueError) as e:
+                print(f'review: {role} witnesses not preserved: {e}', file=sys.stderr)
+            if (d / f'{role}-events.jsonl').is_file():
+                answer = run([sys.executable, SCRIPTS / 'lib/extract.py', d / f'{role}-events.jsonl', '--final'])
+                freeze(d / f'{role}-ARTIFACT.md', answer.stdout)
+    finally:
+        # A signal still held back arrives now and ends the attempt as cancelled.
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, CANCEL_SIGNALS)
+    if cancel is not None:
+        os.kill(os.getpid(), cancel)
     return notes
 
 
@@ -478,10 +506,18 @@ def main(argv=None, freshness_check=None, notices=()):
         installed = []
         child = None
         old_handlers = {}
+        cancelled = []
         def interrupted(signum, frame):
-            raise InterruptedError(f'review interrupted by {signal.Signals(signum).name}')
+            # Only the first signal interrupts, so a second one cannot cut cleanup short.
+            if not cancelled:
+                cancelled.append(f'review interrupted by {signal.Signals(signum).name}')
+                raise InterruptedError(cancelled[0])
+        def honor_cancel():
+            # A step that keeps going past an OSError must not turn a cancellation into a review.
+            if cancelled:
+                raise InterruptedError(cancelled[0])
         try:
-            for sig in (signal.SIGINT, signal.SIGTERM):
+            for sig in CANCEL_SIGNALS:
                 old_handlers[sig] = signal.signal(sig, interrupted)
             timeout = float(os.environ.get('REVIEW_TIMEOUT', '1800'))
             require(math.isfinite(timeout) and timeout > 0, 'timeout', 'REVIEW_TIMEOUT must be positive finite seconds')
@@ -643,6 +679,7 @@ def main(argv=None, freshness_check=None, notices=()):
                 print(f'review: witnesses not preserved: {e}', file=sys.stderr)
             artifact = run([sys.executable, SCRIPTS / 'lib/extract.py', d / 'events.jsonl', '--final'])
             freeze(d / 'ARTIFACT.md', artifact.stdout)
+            honor_cancel()
             unchanged = ledger.observations_state(start, {
                 'executed': True, 'checkout_observations': observations}) == 'UNCHANGED'
             # The validators run only over a finder review that would itself be recorded.
@@ -667,6 +704,7 @@ def main(argv=None, freshness_check=None, notices=()):
                 check_freshness()
             except (Rejected, OSError, ValueError, subprocess.SubprocessError) as e:
                 fresh, freshness_reason = False, str(e).replace('\n', '; ')
+            honor_cancel()
             end = {'event': 'finished', 'round': n, 'executed': True, 'recorded': recorded,
                    'fresh_at_finish': fresh, 'freshness_reason': freshness_reason,
                    'guards': checks, 'checkout_observations': observations,

@@ -51,8 +51,8 @@ original-head..remediation-head diff. Reviewers must carry unresolved findings a
 
 | Exit | Meaning |
 |---|---|
-| `10` from a review or cached review | Review recorded. The calling agent reads the finder's review, each validator answer that ran (or why they were skipped) and the required checks, then repairs, refutes or marks findings nonblocking and runs the follow-up. The status alone never completes the task. |
-| `11` from a review or cached review | Automatic review budget exhausted. The third intact review and all later calls return this. When the latest review covers the exact requested head, its validators completed or were skipped, no blocking finding remains and the required checks pass, the calling agent continues its existing completion path; otherwise it ends the task as failed, naming what remains. |
+| `10` from a review or cached review | Review recorded. The calling agent reads the finder's review, each validator answer that ran (or why they were skipped) and the required checks. When nothing blocking remains on the exact reviewed head and the required checks pass, it continues its existing completion path; otherwise it repairs, refutes or marks findings nonblocking and runs the follow-up. Rerunning with unchanged inputs returns the same cached result. The status alone never completes the task. |
+| `11` from a review or cached review | Automatic review budget exhausted. The third intact review and all later calls return this. When `status` shows the latest review `RECORDED FRESH` for the exact requested head, its validators completed or were skipped, no blocking finding remains and the required checks pass, the calling agent continues its existing completion path; otherwise it ends the task as failed, naming what remains. |
 | `5` from a review | Valid invocation, but repository/ref, preparation, execution or evidence failed, including a validator that failed, timed out or answered nothing. The raw child exit/signal remains in its receipt. The calling agent repairs what its task already permits within the budget or ends as failed. |
 | `12` | Historical: earlier runners returned it, without reserving an attempt, when a contract invariant stayed open in two consecutive reviews. Current runners note the recurrence and review; repair the cause structurally. |
 | `13` from a later review or `witnesses` | A preserved reviewer witness fails on the requested head. No attempt is reserved and no model runs; fix the failure or name a witness shown to be wrong in `REVIEW_WITNESS_DISPUTED`. The same state returns the same result. |
@@ -91,12 +91,13 @@ answer's last nonblank line is exactly `Validation candidates: NONE`. The runner
 and nothing else in the prose; the skip is not a PASS. Otherwise both run, follow-ups included. They
 start only after a finder review that would itself be recorded, so an empty or failed finder launches
 neither. An attempt that needed them is recorded only when both exit 0 with a nonempty final answer.
-A failure, empty answer or timeout returns `5` and keeps every output; the finder's review still feeds
-the next follow-up, which receives `PRIOR_VALIDATION.md` and copies of the earlier validators'
-answers. Witnesses a validator writes merge into the round's `WITNESSES.json`; a path another
-reviewer of the attempt already preserved keeps its first copy and lists the later one as skipped.
-The validators' checkouts are disposable and not observed for mutations as the finder's is. `status`
-and `report` name each validator's answer or why it was skipped, failed or not run.
+A failure, empty answer, timeout or failed setup returns `5` and keeps every output the validators
+wrote; the finder's review still feeds the next follow-up, which receives `PRIOR_VALIDATION.md` and
+copies of the earlier validators' answers. A cancellation also keeps what they wrote and ends the
+attempt as cancelled. Witnesses a validator writes merge into the round's `WITNESSES.json`; a path
+another reviewer of the attempt already preserved keeps its first copy and lists the later one as
+skipped. The validators' checkouts are disposable and not observed for mutations as the finder's is.
+`status` and `report` name each validator's answer or why it was skipped, failed or not run.
 
 ## Contracts, witnesses and supplementary reviews
 

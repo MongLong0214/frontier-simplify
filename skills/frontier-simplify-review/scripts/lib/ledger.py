@@ -51,7 +51,8 @@ def validation(directory, start):
     version = start['validation_version']
     require(type(version) is int and version == VALIDATION_VERSION, 'validation-version',
             'unsupported declared validation version')
-    lines = [line.strip() for line in (directory / 'ARTIFACT.md').read_text(
+    # Exact: a padded, quoted or punctuated marker runs both validators.
+    lines = [line for line in (directory / 'ARTIFACT.md').read_text(
         encoding='utf-8', errors='replace').splitlines() if line.strip()]
     first = start['phase'] == 1 and 'WITNESS_RESULTS.md' not in start['inputs']
     return 'skipped' if first and lines and lines[-1] == NO_CANDIDATES else 'required'
@@ -234,7 +235,7 @@ def validator_answers(directory, end):
     answers = {}
     for role in VALIDATORS:
         name = f'{role}-ARTIFACT.md'
-        if name in end.get('outputs', {}) and (directory / name).stat().st_size:
+        if name in end.get('outputs', {}) and (directory / name).is_file() and (directory / name).stat().st_size:
             answers[role] = directory / name
     return answers
 
@@ -466,7 +467,8 @@ def guard_rejections(ends):
     tally = {}
     for e in ends.values():
         reasons = [(c['guard'], c.get('reason', '')) for c in e.get('guards', []) if not c['ok']]
-        if e.get('reason'):
+        # A validator timeout's note sits beside the guards that already count it.
+        if e.get('reason') and not e.get('guards'):
             reasons.append(('preflight', e['reason']))
         tags = set()
         for fallback, reason in reasons:
@@ -536,8 +538,8 @@ def handoff(root, repo, head, reason='automatic review has stopped'):
         print('This head has not been reviewed. Earlier evidence is not a review of this head.')
     print('The calling agent reads the artifacts above with their execution failures, validator answers '
           'and scope limitations, keeping unresolved findings, repair regressions and newly discovered '
-          'original blockers. When the latest review covers this head, its validators completed or were '
-          'skipped, nothing blocking remains and the required product checks pass, it continues its '
+          'original blockers. When the latest review covers this head and finished FRESH, its validators '
+          'completed or were skipped, nothing blocking remains and the required product checks pass, it continues its '
           'existing completion path; otherwise it ends the task as failed, naming what remains. Nobody '
           'is asked to answer. A new head, phase-1 restart or changed response does not replenish this '
           'PR budget.')

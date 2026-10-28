@@ -324,7 +324,8 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
           and 'Validators: skipped' in host('status', h1, 'v-none').stdout)
     for pr, text in (('v-absent', 'Read a.txt; no defect found.\n'),
                      ('v-inexact', 'No defect.\nValidation candidates: NONE.\n'),
-                     ('v-early', 'Validation candidates: NONE\nF-1 NIT: a.txt wording.\n')):
+                     ('v-early', 'Validation candidates: NONE\nF-1 NIT: a.txt wording.\n'),
+                     ('v-padded', 'No defect.\n  Validation candidates: NONE  \n')):
         stub(t / f'{pr}.jsonl', text)
         ran = host('1', h1, pr, REVIEW_STUB=str(t / f'{pr}.jsonl'))
         d = root(pr) / 'round-0001'
@@ -404,6 +405,15 @@ with tempfile.TemporaryDirectory(prefix='review-followup-test-') as temporary:
     check('a-spent-grant-launches-nothing', spent.returncode == 11 and len(ledger.audit(s, repo)[0]) == 4)
     check('report-shows-the-cumulative-line',
           'supplementary 1/1 granted by maintainer' in host('report', h4, 's').stdout)
+    starts, ends, originals = ledger.audit(s, repo)
+    stale = {**ends, 4: dict(ends[4], recorded=True, fresh_at_finish=False,
+                             freshness_reason='SKILL.md changed during review')}
+    saved = (s / 'HANDOFF.md').read_bytes()
+    text = followup.write_handoff(s, starts[4]['head_sha'], starts, stale, originals, 'test').read_text()
+    (s / 'HANDOFF.md').write_bytes(saved)
+    check('a-stale-review-is-not-offered-as-complete',
+          'review inputs changed before it finished: SKILL.md changed during review' in text
+          and 'recorded a review of the requested head; validators' not in text)
     automatic, used, recorded_grant = ledger.budget(ledger.audit(s, repo)[0])
     check('budget-counts-automatic-and-supplementary-apart',
           (automatic, used, recorded_grant['granted_by']) == (3, 1, 'maintainer'))
