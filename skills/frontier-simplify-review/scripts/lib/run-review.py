@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Trusted host: freeze inputs, run one reviewer, recompute guards, append a receipt."""
+"""Trusted host: freeze inputs, run the finder and its validators, recompute guards, append a receipt."""
 import argparse
+import contextlib
 import fcntl
 import json
 import math
@@ -12,12 +13,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 from datetime import datetime, timezone
 
 from protocol import (Rejected, require, git, digest, hunks, hunk_markdown, artifact_root,
                       review_context, review_exit, RECORDED, FAILED, HANDOFF, MAX_ROUNDS,
-                      child_environment, REDESIGN_REQUIRED, WITNESS_FAILING)
+                      child_environment, WITNESS_FAILING)
 import evidence
 import followup
 import ledger
@@ -149,6 +151,122 @@ def observe_checkout(clone, head, directory, installed, expected_hashes):
                 observations['input_copies'] = {'status': 'error', 'reason': f'{name}: {type(error).__name__}'}
                 break
     return observations
+
+
+def disposable_checkout(repo, head, owned):
+    """A fresh local clone of `head`, listed in `owned` before anything can fail."""
+    # Clone locally so consumer .git and its shared worktrees remain untouched.
+    # A short base, deliberately. macOS puts $TMPDIR at ~49 characters before this
+    # prefix, and a unix socket path is capped at 104 bytes by sun_path -- measured: a
+    # checkout at 81 characters pushed a project's `<stateDir>/hermes.mcp.sock` past the
+    # limit and every socket test in the change failed there with ENOENT. The reviewer
+    # then built its own short worktree to get the evidence, which is evidence produced
+    # outside the seal, and that is worse than the failing tests. The path is still new
+    # every round, so no standing trust accumulates.
+    temp_base = Path('/private/tmp') if Path('/private/tmp').is_dir() else None
+    clone = Path(tempfile.mkdtemp(prefix='r', dir=temp_base) if temp_base
+                 else tempfile.mkdtemp(prefix='review-checkout-'))
+    owned.append(clone)
+    cp = run(['git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', repo, clone])
+    require(cp.returncode == 0, 'checkout', cp.stderr.decode().strip())
+    require(run(['git', '-C', clone, 'checkout', '--quiet', '--detach', head]).returncode == 0,
+            'checkout', 'cannot check out sealed head')
+    return clone
+
+
+def executor_command(executor):
+    if executor == 'codex':
+        cmd = ['codex', 'exec', '--json', '-s', 'read-only']
+        if os.environ.get('REVIEW_CODEX_MODEL'):
+            cmd += ['-m', os.environ['REVIEW_CODEX_MODEL']]
+        return cmd + ['-']
+    if executor == 'claude':
+        # The checkout is deliberately NOT trusted, and the warning saying so is the
+        # property working. Its `.claude/settings.json` is a file from the tree under
+        # review, so a change can add `permissions.allow` entries to its own settings
+        # and a trusted checkout would hand them to the reviewer reviewing it. The path
+        # is new every round exactly so no standing trust accumulates, and pressing the
+        # dialog on the reviewer's behalf would grant a reviewed change the permissions
+        # it wrote for itself. Reported by a consumer as a possible defect; recorded so
+        # the next reader does not "fix" it.
+        return ['claude', '-p', '--input-format', 'text', '--output-format', 'stream-json', '--verbose']
+    raise Rejected('GUARD FAIL [executor] use codex, claude, or stub')
+
+
+def stop(child):
+    # A timeout, cancellation or exited parent must not leave its tool
+    # children writing into a checkout that is about to be removed.
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait()
+
+
+def run_validators(d, repo, head, executor, env, timeout, installed, overlay, values, owned):
+    """Run the refuter and the reproducer in parallel over the finder's whole answer.
+
+    Each gets its own fresh checkout with the finder's inputs, the answer as CANDIDATE_REVIEW.md
+    and the witnesses so far; neither sees the other's answer, and no further model combines
+    them. Returns notes on validators that timed out or could not start.
+    """
+    names = sorted([*installed, 'CANDIDATE_REVIEW.md'])
+    for role in ledger.VALIDATORS:
+        rendered = run([sys.executable, SCRIPTS / 'lib/render-prompt.py', SKILL, role, '--values-stdin'],
+                       input=json.dumps(dict(values, INPUT_FILES=', '.join(names)),
+                                        ensure_ascii=False).encode('utf-8'))
+        require(rendered.returncode == 0, 'prompt', rendered.stderr.decode().strip())
+        freeze(d / f'{role}-prompt.txt', rendered.stdout)
+    clones, witnesses, children, notes = {}, {}, {}, []
+    for role in ledger.VALIDATORS:
+        clone = clones[role] = disposable_checkout(repo, head, owned)
+        for name in installed:
+            copy_input(d / name, clone, name)
+        copy_input(d / 'ARTIFACT.md', clone, 'CANDIDATE_REVIEW.md')
+        witnesses[role], prepared_notes = evidence.prepare(clone, overlay)
+        for note in prepared_notes:
+            print(f'review: {role}: {note}', file=sys.stderr)
+    with contextlib.ExitStack() as files:
+        try:
+            for role, clone in clones.items():
+                if executor == 'stub':
+                    # Stands in for each validator; REVIEW_STUB is the fallback answer.
+                    shutil.copyfile(os.environ.get(f'REVIEW_STUB_{role.upper()}') or os.environ['REVIEW_STUB'],
+                                    d / f'{role}-events.jsonl')
+                    stub_evidence = os.environ.get(f'REVIEW_STUB_{role.upper()}_EVIDENCE')
+                    if stub_evidence and witnesses[role] is not None:
+                        shutil.copytree(stub_evidence, clone / evidence.EVIDENCE, dirs_exist_ok=True)
+                    (d / f'{role}-executor.err').write_text('test fixture executor\n')
+                    (d / f'{role}-executor-exit.txt').write_text('0')
+                    continue
+                out = files.enter_context((d / f'{role}-events.jsonl').open('wb'))
+                err = files.enter_context((d / f'{role}-executor.err').open('wb'))
+                prompt = files.enter_context((d / f'{role}-prompt.txt').open('rb'))
+                try:
+                    children[role] = subprocess.Popen(executor_command(executor), cwd=clone, stdout=out,
+                                                      stderr=err, stdin=prompt, env=env,
+                                                      start_new_session=True)
+                except OSError as error:
+                    notes.append(f'the {role} could not start: {type(error).__name__}')
+            deadline = time.monotonic() + timeout
+            for role, child in children.items():
+                try:
+                    child.wait(timeout=max(0.0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    notes.append(f'the {role} timed out after {timeout:g}s')
+        finally:
+            for role, child in children.items():
+                stop(child)
+                (d / f'{role}-executor-exit.txt').write_text(str(child.returncode))
+    for role, clone in clones.items():
+        try:
+            evidence.collect(clone, d, witnesses[role])
+        except (Rejected, OSError, ValueError) as e:
+            print(f'review: {role} witnesses not preserved: {e}', file=sys.stderr)
+        if (d / f'{role}-events.jsonl').is_file():
+            answer = run([sys.executable, SCRIPTS / 'lib/extract.py', d / f'{role}-events.jsonl', '--final'])
+            freeze(d / f'{role}-ARTIFACT.md', answer.stdout)
+    return notes
 
 
 def witness_timeout():
@@ -303,23 +421,11 @@ def main(argv=None, freshness_check=None, notices=()):
             return review_exit(available and end.get('fresh_at_finish', True),
                                *((supplementary, grant['budget']) if grant else (len(starts),)))
 
-        # Both stops come before a reservation: they launch no reviewer and use no attempt. They
-        # hold for every phase -- a restart or a changed base does not resolve an open contract or
-        # repair what a witness reproduces.
+        # A failing witness stops before a reservation: it launches no reviewer and uses no attempt,
+        # in every phase -- a restart or a changed base does not repair what a witness reproduces.
+        # A recurring contract key no longer stops anything; the notes below carry it.
         reviews = followup.recorded(root, starts, ends)
         tracked = followup.tracked(reviews)
-        keys = followup.recurring(reviews)
-        if keys:
-            latest_review = starts[reviews[-1][0]]
-            reviewed = (latest_review.get('inputs', {}).get('IMPLEMENTER_REDESIGN.md')
-                        if latest_review.get('redesign_supplied') else None)
-            if redesign is None or digest(redesign) == reviewed:
-                path = followup.redesign_request(root, keys, tracked)
-                print(f'review: REDESIGN_REQUIRED {", ".join(keys)} stayed open in two consecutive '
-                      'reviews' + (' and the supplied redesign was already reviewed' if redesign else '')
-                      + '; no reviewer launched and no attempt used. Answer the template in '
-                      f'{path} and supply it as REVIEW_REDESIGN.', file=sys.stderr)
-                return REDESIGN_REQUIRED
         witness_rows, witnesses, overlay, logs = run_witnesses(root, repo, head, starts, ends)
         failing = evidence.blocking(witness_rows)
         if failing:
@@ -331,6 +437,9 @@ def main(argv=None, freshness_check=None, notices=()):
         # A first review has nothing to carry; any later one, restart or not, gets what came before.
         carry = bool(reviews) or phase == 2
         notes = []
+        keys = followup.recurring(reviews)
+        if keys:
+            notes.append(followup.recurrence_note(keys))
         if reviews:
             latest_round = reviews[-1][0]
             repair = run(['git', '-C', repo, 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
@@ -355,7 +464,8 @@ def main(argv=None, freshness_check=None, notices=()):
         start = {'event': 'started', 'round': n, 'phase': phase, 'head_sha': head,
                  'base_sha': base, 'repo': str(repo), 'pr': a.pr, 'mode': ledger.MODE,
                  'inputs': {}, 'context': context, 'executor': executor,
-                 'skill_sha256': context['protocol_sha256'], 'checkout_checks_version': 1}
+                 'skill_sha256': context['protocol_sha256'], 'checkout_checks_version': 1,
+                 'validation_version': ledger.VALIDATION_VERSION}
         if grant:
             start['supplementary'] = dict(grant, number=supplementary + 1)
         if redesign is not None and carry:
@@ -364,6 +474,7 @@ def main(argv=None, freshness_check=None, notices=()):
         executed = False
         finished = False
         clone = None
+        owned = []
         installed = []
         child = None
         old_handlers = {}
@@ -411,6 +522,14 @@ def main(argv=None, freshness_check=None, notices=()):
                 inputs.append('ROUND1_INVENTORY.md')
                 freeze(d / 'PREVIOUS_REVIEW.md', previous_bytes)
                 inputs.append('PREVIOUS_REVIEW.md')
+                index, answers = followup.prior_validation(root, starts, ends, [
+                    ('ROUND1', 'Original review', start['original_round']),
+                    ('PREVIOUS', 'Previous review', start['previous_round'])])
+                freeze(d / 'PRIOR_VALIDATION.md', index)
+                inputs.append('PRIOR_VALIDATION.md')
+                for name, data in answers.items():
+                    freeze(d / name, data)
+                    inputs.append(name)
                 freeze(d / 'IMPLEMENTER_RESPONSE.md', response if response is not None else
                        b'No implementer response supplied. Inspect the complete remediation diff.\n')
                 inputs.append('IMPLEMENTER_RESPONSE.md')
@@ -470,21 +589,10 @@ def main(argv=None, freshness_check=None, notices=()):
             prepared_inputs = ledger.hashes(d, inputs)
             ledger.append(root, {'event': 'prepared', 'round': n, 'inputs': prepared_inputs})
             start['inputs'] = prepared_inputs
-            # Clone locally so consumer .git and its shared worktrees remain untouched.
-            # A short base, deliberately. macOS puts $TMPDIR at ~49 characters before this
-            # prefix, and a unix socket path is capped at 104 bytes by sun_path -- measured: a
-            # checkout at 81 characters pushed a project's `<stateDir>/hermes.mcp.sock` past the
-            # limit and every socket test in the change failed there with ENOENT. The reviewer
-            # then built its own short worktree to get the evidence, which is evidence produced
-            # outside the seal, and that is worse than the failing tests. The path is still new
-            # every round, so no standing trust accumulates.
-            temp_base = Path('/private/tmp') if Path('/private/tmp').is_dir() else None
-            clone = Path(tempfile.mkdtemp(prefix='r', dir=temp_base) if temp_base
-                         else tempfile.mkdtemp(prefix='review-checkout-'))
-            cp = run(['git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', repo, clone])
-            require(cp.returncode == 0, 'checkout', cp.stderr.decode().strip())
-            require(run(['git', '-C', clone, 'checkout', '--quiet', '--detach', head]).returncode == 0,
-                    'checkout', 'cannot check out sealed head')
+            clone = disposable_checkout(repo, head, owned)
+            # Reserved for the validators' copy of the finder's answer; refuse before any model runs.
+            require(not os.path.lexists(clone / 'CANDIDATE_REVIEW.md'), 'input-collision',
+                    'repository already contains CANDIDATE_REVIEW.md')
             for name in inputs:
                 if name in {'SEAL.txt', 'inventory.txt', 'prompt.txt'}:
                     continue
@@ -514,24 +622,7 @@ def main(argv=None, freshness_check=None, notices=()):
                 (d / 'executor.err').write_text('test fixture executor\n')
                 rc = 0
             else:
-                if executor == 'codex':
-                    cmd = ['codex', 'exec', '--json', '-s', 'read-only']
-                    if os.environ.get('REVIEW_CODEX_MODEL'):
-                        cmd += ['-m', os.environ['REVIEW_CODEX_MODEL']]
-                    cmd += ['-']
-                elif executor == 'claude':
-                    # The checkout is deliberately NOT trusted, and the warning saying so is the
-                    # property working. Its `.claude/settings.json` is a file from the tree under
-                    # review, so a change can add `permissions.allow` entries to its own settings
-                    # and a trusted checkout would hand them to the reviewer reviewing it. The path
-                    # is new every round exactly so no standing trust accumulates, and pressing the
-                    # dialog on the reviewer's behalf would grant a reviewed change the permissions
-                    # it wrote for itself. Reported by a consumer as a possible defect; recorded so
-                    # the next reader does not "fix" it.
-                    cmd = ['claude', '-p', '--input-format', 'text',
-                           '--output-format', 'stream-json', '--verbose']
-                else:
-                    raise Rejected('GUARD FAIL [executor] use codex, claude, or stub')
+                cmd = executor_command(executor)
                 with (d / 'events.jsonl').open('wb') as out, (d / 'executor.err').open('wb') as err, \
                      (d / 'prompt.txt').open('rb') as prompt_file:
                     child = subprocess.Popen(cmd, cwd=clone, stdout=out, stderr=err,
@@ -540,13 +631,7 @@ def main(argv=None, freshness_check=None, notices=()):
                     try:
                         rc = child.wait(timeout=timeout)
                     finally:
-                        # A timeout, cancellation or exited parent must not leave its tool
-                        # children writing into a checkout that is about to be removed.
-                        try:
-                            os.killpg(child.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        child.wait()
+                        stop(child)
             (d / 'executor-exit.txt').write_text(str(rc))
             observations = observe_checkout(clone, head, d, installed, start['inputs'])
             (d / 'checkout-head.txt').write_text(observations['head'].get('observed_sha', '') + '\n')
@@ -558,9 +643,25 @@ def main(argv=None, freshness_check=None, notices=()):
                 print(f'review: witnesses not preserved: {e}', file=sys.stderr)
             artifact = run([sys.executable, SCRIPTS / 'lib/extract.py', d / 'events.jsonl', '--final'])
             freeze(d / 'ARTIFACT.md', artifact.stdout)
-            checks = ledger.recompute(repo, d, start, clone)
-            recorded = all(c['ok'] for c in checks) and ledger.observations_state(start, {
+            unchanged = ledger.observations_state(start, {
                 'executed': True, 'checkout_observations': observations}) == 'UNCHANGED'
+            # The validators run only over a finder review that would itself be recorded.
+            validation_notes = []
+            if unchanged and all(c['ok'] for c in ledger.recompute(repo, d, start, clone)
+                                 if not ledger.validator_guard(c['guard'])) \
+                    and ledger.validation(d, start) == 'required':
+                if witnessed:
+                    overlay = {**overlay, **{item['path']: d / 'witnesses' / item['path'] for item in
+                                             json.loads((d / 'WITNESSES.json').read_bytes())['files']}}
+                kind = ('first review of Base..Reviewed-head' if not carry and phase == 1 else
+                        'restarted scope review of Base..Reviewed-head after earlier reviews of this PR'
+                        if phase == 1 else f"follow-up review of the repair from {start['round1_head_sha']}")
+                print(f'review: round {n}, validators {", ".join(ledger.VALIDATORS)} in parallel', file=sys.stderr)
+                validation_notes = run_validators(d, repo, head, executor, env, timeout, installed, overlay,
+                                                  dict(values, HEAD_SHA=head, REVIEW_KIND=kind), owned)
+                witnessed = (d / 'WITNESSES.json').is_file()
+            checks = ledger.recompute(repo, d, start, clone)
+            recorded = all(c['ok'] for c in checks) and unchanged
             fresh, freshness_reason = True, ''
             try:
                 check_freshness()
@@ -571,14 +672,19 @@ def main(argv=None, freshness_check=None, notices=()):
                    'guards': checks, 'checkout_observations': observations,
                    'inventory_sha256': digest(artifact.stdout) if phase == 1 else start['inventory_sha256'],
                    'outputs': ledger.hashes(d, ['ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt']
-                                            + (['WITNESSES.json'] if witnessed else []))}
+                                            + (['WITNESSES.json'] if witnessed else [])
+                                            + [name for role in ledger.VALIDATORS
+                                               for name in ledger.validator_outputs(role) if (d / name).is_file()])}
+            if validation_notes:
+                end['reason'] = '; '.join(validation_notes)
             ledger.append(root, end)
             finished = True
             for check in checks:
                 if not check['ok']:
                     print(check['reason'], file=sys.stderr)
             print(f'review: {"RECORDED" if recorded else "FAILED"} {"FRESH" if fresh else "STALE"} artifact {d / "ARTIFACT.md"}; '
-                  'maintainer must assess the evidence; no automatic merge approval')
+                  'the calling agent reads it with the validators and required checks; no automatic merge approval')
+            print('review: validators: ' + ledger.validators_state(d, start, end))
             print('review: ' + ledger.cumulative(root, {**starts, n: start}, grant), file=sys.stderr)
             if not fresh:
                 print(freshness_reason, file=sys.stderr)
@@ -593,11 +699,7 @@ def main(argv=None, freshness_check=None, notices=()):
                 print(reason, file=sys.stderr)
                 return FAILED
             if child is not None:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                child.wait()
+                stop(child)
                 (d / 'executor-exit.txt').write_text(str(child.returncode))
             if not started:
                 print(reason, file=sys.stderr)
@@ -605,7 +707,9 @@ def main(argv=None, freshness_check=None, notices=()):
             observations = (observe_checkout(clone, head, d, installed, start['inputs'])
                             if executed else None)
             output_names = [name for name in ['ARTIFACT.md', 'events.jsonl', 'executor.err',
-                            'executor-exit.txt', 'checkout-head.txt'] if (d / name).is_file()]
+                            'executor-exit.txt', 'checkout-head.txt', 'WITNESSES.json',
+                            *(name for role in ledger.VALIDATORS for name in ledger.validator_outputs(role))]
+                            if (d / name).is_file()]
             end = {'event': 'finished', 'round': n, 'executed': executed,
                    'recorded': False, 'reason': reason, 'outputs': ledger.hashes(d, output_names)}
             if executed:
@@ -618,11 +722,11 @@ def main(argv=None, freshness_check=None, notices=()):
         finally:
             for sig, handler in old_handlers.items():
                 signal.signal(sig, handler)
-            if clone:
-                if clone.is_symlink():
-                    clone.unlink()
-                elif clone.exists():
-                    shutil.rmtree(clone)
+            for path in owned:
+                if path.is_symlink():
+                    path.unlink()
+                elif path.exists():
+                    shutil.rmtree(path)
 
 
 if __name__ == '__main__':

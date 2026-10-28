@@ -49,12 +49,13 @@ hands off and later polls launch no reviewer. This guarantees termination of aut
 not safe merge convergence. See the
 [runner guide](../skills/frontier-simplify-review/README.md) for optional remediation responses and retries.
 
-Runner exit 10 means review evidence was recorded; 11 means the automatic budget ended in a human
-handoff. The poller treats these as completed invocations,
-so a BLOCK recommendation does not appear as an infrastructure failure. Poller exit 0 means its
-invocations completed, **never that any PR is approved**. Existing maintainer review and product
-checks decide merging; neither this command nor its child runner belongs in an automatic approval
-condition.
+Runner exit 10 means a review was recorded, 11 that the automatic budget ended, and 13 that a
+preserved witness still fails on the head. The poller treats these as completed invocations, so a
+BLOCK recommendation does not appear as an infrastructure failure. It discovers and reviews; it does
+not repair, re-review or merge, and a completed poll is not a completed task. Poller exit 0 means its
+invocations completed, **never that any PR is approved**. The agent working on each PR acts on the
+result and the existing required checks and merge permissions decide merging; neither this command
+nor its child runner belongs in an automatic approval condition.
 
 The catalog carries attributed leads, including those from rejected reviews. No automatic standing
 class is created from repeated mentions. Refusal reports expose available leaf reasons; they do not
@@ -80,8 +81,9 @@ replays publish no lead; a missing configured lesson directory is reported as an
 
 The poller automates PR discovery, bounded review execution, artifact preservation, lead harvesting
 and delivery of configured lessons. Regression replay is a separate, explicitly invoked helper;
-the poller does not discover repairs or publish lessons by itself. Humans select the causal question, implement the repair,
-assess whether a reproduction is relevant and an occurrence independent, and decide the merge.
+the poller does not discover repairs or publish lessons by itself. Whoever invokes it selects the causal question,
+implements the repair and assesses whether a reproduction is relevant and an occurrence independent; the existing
+required checks and merge permissions decide the merge.
 No scheduler or consumer configuration is silently installed by a replay. The demonstrated AOS
 facet regression and Node empty-selector failure witnesses are recorded in
 [REASSESSMENT.md](REASSESSMENT.md). This proves an executable feedback path, not a model-recall gain.

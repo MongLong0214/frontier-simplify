@@ -34,13 +34,14 @@ a fresh phase 1 consumes the same PR budget. **At most three attempts per stable
 including failures and interruptions; only a recorded supplementary grant (below) adds more. The per-PR lock protects the count; it is checked before
 creating another attempt or launching an executor. No head, response or phase change resets it.
 Legacy attempts count; a PR already over the limit immediately hands off without rewriting history.
-The third attempt is the last automatic review. Later calls report the preserved artifacts and
-remaining human work without running a model or appending another refusal. Keep the PR ID and
+The third attempt is the last automatic review. Later calls report the preserved artifacts and the
+calling agent's next action without running a model or appending another refusal. Keep the PR ID and
 artifact root stable; this is a cooperative host limit, not protection against an operator deleting
 history or assigning an alias. It bounds attempts, not repair count or safe merge arrival.
 Each executor has a 1,800-second timeout; `REVIEW_TIMEOUT` accepts any positive finite number of
-seconds. Timeout and SIGINT/SIGTERM stop its process group, preserve failure output and release
-the lock. A process that could not start is recorded as not executed. SIGKILL or a host crash can
+seconds. The two validators share one such deadline, so an attempt that runs them can take up to
+twice `REVIEW_TIMEOUT`. Timeout and SIGINT/SIGTERM stop every executor's process group, preserve
+failure output and release the lock. A process that could not start is recorded as not executed. SIGKILL or a host crash can
 leave an interrupted attempt; status detects active runs from the OS lock, not an old PID file.
 
 The implementer response is optional prose. When absent, the reviewer works from the complete diff
@@ -50,42 +51,64 @@ original-head..remediation-head diff. Reviewers must carry unresolved findings a
 
 | Exit | Meaning |
 |---|---|
-| `10` from a review or cached review | Execution evidence recorded; read the review and make the merge decision through the existing review workflow. |
-| `11` from a review or cached review | Automatic review budget exhausted; human handoff. The third intact review and all later calls return this. It can contain BLOCKERs, gaps or an unreviewed requested head. |
-| `5` from a review | Valid invocation, but repository/ref, preparation, execution or evidence failed. The raw child exit/signal remains in its receipt. |
-| `12` from a later review | A contract invariant stayed open in two consecutive reviews and no new redesign was supplied. No attempt is reserved and no model runs; answer `REDESIGN-REQUIRED.md`. |
-| `13` from a later review or `witnesses` | A preserved reviewer witness fails on the requested head. No attempt is reserved and no model runs; finish the repair or name a wrong witness in `REVIEW_WITNESS_DISPUTED`. |
+| `10` from a review or cached review | Review recorded. The calling agent reads the finder's review, each validator answer that ran (or why they were skipped) and the required checks, then repairs, refutes or marks findings nonblocking and runs the follow-up. The status alone never completes the task. |
+| `11` from a review or cached review | Automatic review budget exhausted. The third intact review and all later calls return this. When the latest review covers the exact requested head, its validators completed or were skipped, no blocking finding remains and the required checks pass, the calling agent continues its existing completion path; otherwise it ends the task as failed, naming what remains. |
+| `5` from a review | Valid invocation, but repository/ref, preparation, execution or evidence failed, including a validator that failed, timed out or answered nothing. The raw child exit/signal remains in its receipt. The calling agent repairs what its task already permits within the budget or ends as failed. |
+| `12` | Historical: earlier runners returned it, without reserving an attempt, when a contract invariant stayed open in two consecutive reviews. Current runners note the recurrence and review; repair the cause structurally. |
+| `13` from a later review or `witnesses` | A preserved reviewer witness fails on the requested head. No attempt is reserved and no model runs; fix the failure or name a witness shown to be wrong in `REVIEW_WITNESS_DISPUTED`. The same state returns the same result. |
 | `2` | Command syntax or argument count is invalid; no attempt is reserved. |
 | `0` from help, `status`, `report`, `path`, `hunks` or a passing `witnesses` | The utility completed. This is never a PR approval. |
 
 **Review execution never returns 0, including a PASS recommendation and every stub run.** A shell
 caller that previously used exit 0 as a merge gate must stop doing so. Do not reinterpret exit 10 as
 approval: a BLOCK, an incomplete review and an uninformative answer all share it. Execution completion
-and product safety are different questions. The existing maintainer and required product checks
-assess the evidence; there is no new approval record or alternate override path.
+and product safety are different questions. The calling agent assesses the evidence against the
+required product checks; there is no new approval record or alternate override path.
 An evidence failure on attempt three still returns 5 and prints the terminal handoff; subsequent
 calls return 11. Neither status licenses a retry beyond the budget. `report` and evidence replay
 remain available after the limit. Replay's 10 means evidence availability even for historical
 attempts over the limit; replay does not launch a reviewer or grant a new attempt.
 
-The tool does not block or authorize a merge. Required product checks and maintainer decisions do.
+The tool does not block or authorize a merge. Required product checks and existing merge permissions do.
 Review recommendations remain BLOCK for every confirmed, unresolved defect in scope, including
 repair regressions and original blockers discovered later. Missing required evidence prevents a
 PASS recommendation. Nits, prose formatting, catalog repetition and the exhausted budget cannot
-turn into a product blocker or close one. Humans assess requirements, coverage, severity, disputed
-reproductions, closure, and integration risk on the actual merge target.
+turn into a product blocker or close one. The calling agent assesses requirements, coverage, severity,
+disputed reproductions, closure and integration risk on the actual merge target, and ends the task as
+failed when a judgment or evidence it needs stays open; nobody is asked to answer.
+
+## Finder and validators
+
+One attempt is one finder review and, when needed, two validators over its whole answer: a refuter
+and a reproducer. They run in parallel in separate fresh checkouts of the reviewed head, each with the
+finder's inputs, its answer as `CANDIDATE_REVIEW.md` and the witnesses preserved so far. Neither sees
+the other's answer and no further model combines them; the calling agent reads all three. Their files
+sit in the same round with a `refuter-` or `reproducer-` prefix (prompt, events, stderr, exit and
+`ARTIFACT.md`); the top-level `ARTIFACT.md` and `events.jsonl` stay the finder's own.
+
+The validators are skipped only for a first review that inherits no earlier review and whose final
+answer's last nonblank line is exactly `Validation candidates: NONE`. The runner reads that one line
+and nothing else in the prose; the skip is not a PASS. Otherwise both run, follow-ups included. They
+start only after a finder review that would itself be recorded, so an empty or failed finder launches
+neither. An attempt that needed them is recorded only when both exit 0 with a nonempty final answer.
+A failure, empty answer or timeout returns `5` and keeps every output; the finder's review still feeds
+the next follow-up, which receives `PRIOR_VALIDATION.md` and copies of the earlier validators'
+answers. Witnesses a validator writes merge into the round's `WITNESSES.json`; a path another
+reviewer of the attempt already preserved keeps its first copy and lists the later one as skipped.
+The validators' checkouts are disposable and not observed for mutations as the finder's is. `status`
+and `report` name each validator's answer or why it was skipped, failed or not run.
 
 ## Contracts, witnesses and supplementary reviews
 
-A contract defect is reported as one invariant, a producer/sink table and a stable key in a final
-`- invariant: KEY | family N | STATUS | sentence` line. The host carries every key's latest status
-and the attempts that reported it open into the next prompt so the reviewer reuses the key. If the
-same key is OPEN, ROUND1-ESCAPE or REGRESSION in the two latest recorded reviews, any later review
-returns `12` before reserving an attempt and writes `REDESIGN-REQUIRED.md` from the SKILL.md template.
-`REVIEW_REDESIGN` (or `pr-N-redesign.md` beside the PR adapter's response file) supplies the answer,
-frozen as `IMPLEMENTER_REDESIGN.md`; a redesign already reviewed while the key stayed open does not
-reopen review. Both stops hold for every phase: a phase-1 restart or a changed base resolves neither
-an open contract nor a reproduced defect. The lines are read only to stop work. A reviewer that omits them stops nothing, and that absence is not convergence.
+A contract defect is reported as one invariant, the sites that share its cause and an optional
+stable key in a final `- invariant: KEY | family N | STATUS | sentence` line; a producer/sink table
+is optional. The host carries every key's latest status and the attempts that reported it open into
+the next prompt so the reviewer reuses the key. If the same key is OPEN, ROUND1-ESCAPE or REGRESSION
+in the two latest recorded reviews, the next prompt, stderr, `status` and the handoff note that its
+cause needs a structural repair; the review still runs. `REVIEW_REDESIGN` (or `pr-N-redesign.md`
+beside the PR adapter's response file) optionally supplies a redesign, frozen for a later review as
+`IMPLEMENTER_REDESIGN.md`. The lines are read only to carry keys and notes. A reviewer that omits
+them changes nothing, and that absence is not convergence.
 A family-5 key that stays open while most new non-test code lines since the last review are
 conditionals or early exits adds an advisory repair-shape note; it blocks nothing.
 
@@ -95,7 +118,8 @@ cache directories, files over 1 MiB, and anything past 16 MiB or 200 files are l
 A witness is a top-level `review_evidence/<ID>.sh`, run as `bash` from the repository root: nonzero
 while the defect is present, 0 once it is fixed. Before any later review reserves an attempt, every
 active witness from the PR's recorded reviews runs in a clean exact-head clone, `REVIEW_WITNESS_TIMEOUT`
-seconds each (default 300). Witnesses stay with the PR, across restarts, until retired with a reason.
+seconds each (default 300). Witnesses stay with the PR in every phase, across restarts and changed
+bases, until retired with a reason.
 The whole preserved bundle is restored over the tree there and checked byte for byte before anything
 runs, so the tree under review cannot supply a witness or a helper it reads; a bundle that cannot be
 restored intact is an ERROR. Restoration never writes through a link. Any FAIL, TIMEOUT or ERROR returns `13`. `REVIEW_WITNESS_DISPUTED`
@@ -112,14 +136,16 @@ environment (PATH, HOME, TMPDIR, locale, user and shell), never the runner's tok
 `REVIEW_WITNESS_WRAPPER` is a command prefix for every witness, such as the sandbox the executor runs
 in; without one a witness has the runner's file access. Set it wherever that access matters.
 
-The three automatic attempts are unchanged. After them, `--supplementary --granted-by WHO --budget N`
-runs more reviews of the same kind; the granter, budget and number are written into each such
+The three automatic attempts are unchanged. After them, a calling task that already holds a grant uses
+`--supplementary --granted-by WHO --budget N` to run more reviews of the same kind; the granter, budget and number are written into each such
 attempt's `started` record, so older readers still see an over-limit history and hand off. A grant
 while automatic attempts remain is refused. Every review prints `PR cumulative reviews k (automatic
 a/3, supplementary m/N granted by WHO), cumulative time T` before anything else, `review-pr.sh`
 included, measured from the ledger's reservation and finish times. The last automatic attempt and the last granted review write
-`HANDOFF.md`: the latest and original review paths, tracked invariants, the witness ledger, any
-redesign and a decision request (redesign, shrink the contract, accept the risk and merge, or hold).
+`HANDOFF.md`: the latest and original review paths with the latest review's validators, tracked
+invariants, any recurrence note, the witness ledger and the calling agent's next action: continue the
+existing completion path when the latest review covers the requested head and nothing blocking
+remains, otherwise end the task as failed with the cause. It asks no one to answer.
 The grant is a recorded cooperative limit, not access control. A review run outside the runner
 cannot be counted; when an implementer response cites finding IDs that no recorded review for the PR
 contains, the next prompt and stderr say so.
@@ -155,7 +181,7 @@ scripts/review-replay.sh "$REPO" "$LEDGER_DIRECTORY" "$BASE" "$HEAD"
 This performs no discovery, fetch, execution or ledger writes. It recomputes execution and byte
 checks, preserves historical rejections and reports each attempt. Exit 5 names a missing target,
 missing execution evidence or integrity failure; exit 10 means the latest attempt at that exact
-base..head has preserved evidence for human assessment. An earlier intact attempt cannot hide a
+base..head has preserved evidence for the calling agent to assess. An earlier intact attempt cannot hide a
 later interrupted attempt at the same target. Neither exit authorizes merging. CI status, product
 test counts, mutation measurements and contract versions written in a prompt are not attested by
 these receipts. Replay does not manufacture those missing measurements from a reviewer's prose.
@@ -174,9 +200,10 @@ older receipts without them say `NOT_OBSERVED`, not pass or fail. Phase 2 binds 
 previous review bytes, while a response-only follow-up still reviews the complete repair diff.
 
 If a ledger has an unrecorded round directory, `status` and `report` expose its path and writes
-stop with `ORPHANED_PREPARATION`. Preserve the directory and ledger for human review; do not delete,
-adopt, truncate or rename the root to restart the budget. A v2 writer cannot safely resume a v3
-root. Keep the v3 reader while fixing it, or stop automatic review and hand off. A normally
+stop with `ORPHANED_PREPARATION`: no review can be recorded for that PR ID, so the review ends as
+failed, naming the path. Preserve the directory and ledger; do not delete, adopt, truncate or rename
+the root to restart the budget. A v2 writer cannot safely resume a v3 root. Keep the v3 reader while
+fixing it, or end the review as failed. A normally
 interrupted v3 attempt can use an explicit retry only within the remaining budget.
 
 ## Host inputs and consumers
@@ -311,7 +338,8 @@ hook from that version so retired contract tests do not pin the old design forev
 installation change, not a release or a push.
 
 Tests cover failed execution, altered artifacts, commit/ancestry mismatches, prose handoff, later
-open findings, cached status and the absence of an automatic approval path. They do not measure
+open findings, cached status, validator skips, failures, timeouts and cancellation, and the absence
+of an automatic approval path. They do not measure
 reviewer recall or safe merge completion. The [reassessment](../../dogfood/REASSESSMENT.md) explains
 why the Markdown gates and their tests were retired.
 

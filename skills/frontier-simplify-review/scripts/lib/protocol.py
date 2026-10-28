@@ -124,8 +124,8 @@ def hunk_markdown(rows):
 RECORDED = 10
 FAILED = 5
 HANDOFF = 11
-# Returned before any reservation or model launch; neither consumes an attempt.
-REDESIGN_REQUIRED = 12
+# Returned before any reservation or model launch; it consumes no attempt. Former releases also
+# returned 12 when a contract key recurred; that stop is gone and 12 is never returned.
 WITNESS_FAILING = 13
 MAX_ROUNDS = 3
 

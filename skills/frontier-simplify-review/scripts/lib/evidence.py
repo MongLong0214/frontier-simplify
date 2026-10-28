@@ -18,6 +18,7 @@ import tempfile
 import time
 
 from protocol import digest, require, child_environment
+import ledger
 
 EVIDENCE = 'review_evidence'
 SKIP_DIRECTORIES = {'node_modules', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache',
@@ -112,14 +113,23 @@ def intact(clone, overlay):
 
 
 def collect(clone, directory, installed):
-    """Preserve files the reviewer created or changed under review_evidence/. Returns True if any."""
+    """Preserve files the reviewer created or changed under review_evidence/. Returns True if any.
+
+    The finder and both validators of one attempt collect into the same bundle in turn. A path an
+    earlier reviewer of the attempt already preserved keeps its bytes; a different later copy is
+    listed as skipped, never written over it.
+    """
     base = clone / EVIDENCE
     if installed is None or base.is_symlink() or not base.is_dir():
-        return False
+        return (directory / 'WITNESSES.json').is_file()
     listed = run(['git', '--literal-pathspecs', '-C', clone, 'ls-files', '-z', '--', EVIDENCE])
     require(listed.returncode == 0, 'witness-collect', 'cannot list tracked evidence files')
     tracked = {p.decode('utf-8', 'surrogateescape') for p in listed.stdout.split(b'\0') if p}
-    files, skipped, total = [], [], 0
+    manifest = directory / 'WITNESSES.json'
+    earlier = json.loads(manifest.read_bytes()) if manifest.is_file() else {'files': [], 'skipped': []}
+    files, skipped = earlier['files'], earlier['skipped']
+    preserved = {item['path']: item['sha256'] for item in files}
+    total = sum(item['size'] for item in files)
     for current, directories, names in os.walk(base, followlinks=False):
         here = Path(current)
         for name in sorted(directories):
@@ -141,7 +151,10 @@ def collect(clone, directory, installed):
                 skipped.append({'path': rel, 'reason': 'over the preservation size or count limit'})
                 continue
             data = path.read_bytes()
-            if installed.get(rel) == digest(data):
+            if installed.get(rel) == digest(data) or preserved.get(rel) == digest(data):
+                continue
+            if rel in preserved:
+                skipped.append({'path': rel, 'reason': 'another reviewer of this attempt preserved this path'})
                 continue
             target = directory / 'witnesses' / rel
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -151,14 +164,15 @@ def collect(clone, directory, installed):
             files.append({'path': rel, 'sha256': digest(data), 'size': len(data)})
     if not files and not skipped:
         return False
-    manifest = {'schema_version': 1, 'files': files, 'skipped': skipped}
-    (directory / 'WITNESSES.json').write_bytes(
-        json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False).encode() + b'\n')
+    skipped = [item for i, item in enumerate(skipped) if item not in skipped[:i]]
+    manifest.write_bytes(json.dumps({'schema_version': 1, 'files': files, 'skipped': skipped},
+                                    indent=2, sort_keys=True, ensure_ascii=False).encode() + b'\n')
     return True
 
 
 def view(root, starts, ends, since=1):
-    """Witnesses of this PR's recorded reviews from attempt `since` on.
+    """Witnesses of this PR's recorded reviews from attempt `since` on, including an attempt whose
+    finder review stayed usable after a required validator failed.
 
     Later bytes replace earlier ones path by path. An ID is a top-level review_evidence/<ID>.sh.
     `- witness_obsolete: <ID> -- <reason>` in a later recorded review retires it; a retirement
@@ -167,7 +181,7 @@ def view(root, starts, ends, since=1):
     witnesses, overlay = {}, {}
     for n in sorted(starts):
         end = ends.get(n, {})
-        if n < since or not (end.get('executed') and end.get('recorded', end.get('accepted'))):
+        if n < since or not ledger.finder_recorded(starts[n], end):
             continue
         directory = root / f'round-{n:04}'
         if 'WITNESSES.json' in end.get('outputs', {}):

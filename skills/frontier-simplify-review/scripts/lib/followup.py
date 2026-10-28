@@ -1,24 +1,18 @@
-"""What one review hands the next: open contract invariants, redesign requests and the handoff.
+"""What one review hands the next: open contract invariants, prior validation and the handoff.
 
-The reviewer's prose stays the evidence. A few explicit lines are read from it only to stop
-work -- to ask for a redesign instead of another review -- never to close a finding or
+The reviewer's prose stays the evidence. A few explicit lines are read from it only to carry
+keys forward and to say when one keeps recurring, never to stop a review, close a finding or
 authorize a merge. A review without those lines reports nothing here, which is not the same
 as nothing open.
 """
-import json
 import os
 from pathlib import Path
 import re
-import subprocess
-import sys
 import tempfile
 
-from protocol import require, child_environment
 import evidence
 import ledger
 
-HERE = Path(__file__).resolve().parent
-SKILL = HERE.parent.parent / 'SKILL.md'
 INVARIANT = re.compile(r'^[ \t]*[-*][ \t]+invariant:[ \t]*(.+?)[ \t]*$', re.M)
 KEY = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}')
 FAMILY = re.compile(r'(?:family[ \t]*)?([0-9]{1,2}(?:[ \t]*,[ \t]*[0-9]{1,2})*)', re.I)
@@ -54,9 +48,8 @@ def recorded(root, starts, ends):
     """(attempt, final prose) for every recorded review, in ledger order."""
     rows = []
     for n in sorted(starts):
-        end = ends.get(n, {})
         path = root / f'round-{n:04}' / 'ARTIFACT.md'
-        if end.get('executed') and end.get('recorded', end.get('accepted')) and path.is_file():
+        if ledger.finder_recorded(starts[n], ends.get(n, {})) and path.is_file():
             rows.append((n, path.read_text(encoding='utf-8', errors='replace')))
     return rows
 
@@ -97,16 +90,29 @@ def write_atomic(path, data):
     return path
 
 
-def redesign_request(root, keys, rows):
-    """Render the SKILL.md template into REDESIGN-REQUIRED.md for the implementer to answer."""
-    values = {'INVARIANT_KEYS': ', '.join(keys),
-              'RECURRENCE': '; '.join(f"{key} open in attempts {', '.join(map(str, rows[key]['open_rounds']))}"
-                                      for key in keys)}
-    rendered = subprocess.run([sys.executable, str(HERE / 'render-prompt.py'), str(SKILL), 'redesign',
-                               '--values-stdin'], input=json.dumps(values).encode(),
-                              capture_output=True, env=child_environment())
-    require(rendered.returncode == 0, 'redesign-template', rendered.stderr.decode().strip())
-    return write_atomic(root / 'REDESIGN-REQUIRED.md', rendered.stdout)
+def recurrence_note(keys):
+    """Guidance, not a stop: the next review runs either way."""
+    return (f'contract invariant(s) {", ".join(keys)} stayed open in two consecutive reviews: repair the '
+            'cause structurally, at one enforcement point every producer passes through, instead of one '
+            'more path. The review proceeds.')
+
+
+def prior_validation(root, starts, ends, rounds):
+    """PRIOR_VALIDATION.md and copies of the validators' answers for a follow-up's reviewers.
+
+    `rounds` lists (file prefix, title, attempt) for the original and previous reviews.
+    """
+    lines = ['# Prior validation', '',
+             "The host's index of what the two validators did for the reviews this follow-up builds on. "
+             'A status is not a verdict; the answers are in the files named.', '']
+    copies = {}
+    for label, title, n in rounds:
+        directory = root / f'round-{n:04}'
+        answers = ledger.validator_answers(directory, ends[n])
+        names = {role: f'{label}_{role.upper()}.md' for role in answers}
+        copies.update((names[role], path.read_bytes()) for role, path in answers.items())
+        lines.append(f'- {title}, attempt {n}: ' + ledger.validators_state(directory, starts[n], ends[n], names))
+    return ('\n'.join(lines) + '\n').encode(), copies
 
 
 def repair_shape(patch):
@@ -166,7 +172,7 @@ def summary(root, starts, ends, originals):
                   f"{row['round']}; open in attempts {', '.join(map(str, row['open_rounds'])) or 'none'}")
     keys = recurring(recorded(root, starts, ends))
     if keys:
-        print('REDESIGN_REQUIRED before another review: ' + ', '.join(keys))
+        print(recurrence_note(keys))
     witnesses, _ = evidence.view(root, starts, ends)
     if witnesses:
         print('witness ledger:')
@@ -179,14 +185,14 @@ def cell(text):
 
 
 def write_handoff(root, head, starts, ends, originals, reason):
-    """A decision document. The findings stay in the reviews; nothing here closes or approves."""
+    """The calling agent's next action. The findings stay in the reviews; nothing here closes or approves."""
     reviews = recorded(root, starts, ends)
     rows = tracked(reviews)
     pr = next((s.get('pr') for s in starts.values() if s.get('pr')), root.name)
     lines = [f'# Review handoff: {pr}', '', f'Requested head: {head}', f'Reason: {reason}.',
              ledger.cumulative(root, starts) + '.', '',
-             'No automatic review will run for this PR without a new recorded grant. '
-             'Nothing here authorizes a merge.', '', '## Findings', '',
+             'No further review runs for this PR unless the calling task already holds a supplementary '
+             'grant. Nothing here authorizes a merge or asks anyone to answer.', '', '## Findings', '',
              "The remaining findings are in the reviewers' own words; the host does not extract them."]
     if originals:
         n, directory, start, _ = originals[-1]
@@ -195,6 +201,7 @@ def write_handoff(root, head, starts, ends, originals, reason):
         n = reviews[-1][0]
         lines.append(f"- Latest recorded review: attempt {n}, head {starts[n]['head_sha']}: "
                      f"{root / f'round-{n:04}' / 'ARTIFACT.md'}")
+        lines.append('  Validators: ' + ledger.validators_state(root / f'round-{n:04}', starts[n], ends[n]))
     else:
         lines.append('- No recorded review exists for this PR.')
     unusable = [n for n in starts if not ends.get(n, {}).get('recorded', ends.get(n, {}).get('accepted'))]
@@ -209,24 +216,34 @@ def write_handoff(root, head, starts, ends, originals, reason):
                   for key, row in rows.items()]
     else:
         lines.append('No review reported a contract invariant line. That is not evidence that none is open.')
+    keys = recurring(reviews)
+    if keys:
+        lines += ['', recurrence_note(keys).replace(' The review proceeds.', '')]
     lines += ['', '## Witnesses', '']
     witnesses = evidence.view(root, starts, ends)[0]
     lines += evidence.ledger_rows(witnesses) or ['No preserved witness.']
-    redesigned = [n for n in starts if 'IMPLEMENTER_REDESIGN.md' in starts[n].get('inputs', {})
-                  and starts[n].get('redesign_supplied')]
-    keys = recurring(reviews)
-    lines += ['', '## Redesign', '']
-    lines.append(f'Latest supplied redesign: attempt {redesigned[-1]}.' if redesigned
-                 else 'No redesign was supplied.')
-    if keys:
-        lines.append(f"Still open in two consecutive reviews: {', '.join(keys)}. "
-                     f"Template: {root / 'REDESIGN-REQUIRED.md'}")
-    lines += ['', '## Decision requested', '',
-              'Record who decides and choose one:', '',
-              '- [ ] Redesign: replace the path-by-path repairs with one enforcement point, then grant a '
-              'supplementary review of that design.',
-              '- [ ] Shrink the contract: stop promising the behavior on the paths still failing, and route '
-              'them as separate issues.',
-              '- [ ] Accept the risk and merge: name each open finding accepted and who owns it.',
-              '- [ ] Hold or close the change.', '']
+    latest = max(starts) if starts else None
+    end = ends.get(latest, {}) if latest else {}
+    if latest is None:
+        state = 'No attempt was recorded for this PR, so no review covers the requested head.'
+    elif starts[latest]['head_sha'] != head:
+        state = (f'The requested head has not been reviewed: the latest attempt, {latest}, reviewed '
+                 f"{starts[latest]['head_sha']}.")
+    elif not end.get('recorded', end.get('accepted')):
+        failures = [c['reason'] for c in end.get('guards', []) if not c['ok']]
+        cause = end.get('reason') or (failures[0] if failures else 'it did not finish')
+        state = (f'The latest attempt, {latest}, covers the requested head but did not record a '
+                 f'complete review: {cause}.')
+    else:
+        state = (f'The latest attempt, {latest}, recorded a review of the requested head; validators: '
+                 + ledger.validators_state(root / f'round-{latest:04}', starts[latest], end) + '.')
+    lines += ['', '## Next action', '', state, '',
+              'The calling agent decides this from the code and evidence; it asks no one to answer:', '',
+              '- When the latest attempt recorded a review of the requested head with its validators completed '
+              'or skipped, read it and every validator answer. If no blocking finding remains unresolved and '
+              'the required checks pass, continue the existing completion path; the last attempt counts.',
+              '- Otherwise end the task as failed, naming the unreviewed head, the failed attempt or the '
+              'missing evidence above; the preserved outputs stay for a later task.',
+              '- Settle disagreements between the review and the validators against the code. A nonblocking '
+              'one ends with its reason; a judgment the task needs that stays open ends the task as failed.', '']
     return write_atomic(root / 'HANDOFF.md', '\n'.join(lines).encode())

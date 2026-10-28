@@ -12,6 +12,10 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
 MODE = 'prose-review-v3'
 PROSE_MODES = {'prose-review-v2', MODE}
+VALIDATORS = ('refuter', 'reproducer')
+# The only line the host reads from a finder's prose: a hint to skip validation, never a PASS.
+NO_CANDIDATES = 'Validation candidates: NONE'
+VALIDATION_VERSION = 1
 
 
 def prose_mode(start):
@@ -25,6 +29,32 @@ def scope_version(start):
     require(type(version) is int and version == 1, 'scope-version',
             'unsupported declared scope schema version')
     return version
+
+
+def validator_guard(name):
+    return name.split('-', 1)[0] in VALIDATORS
+
+
+def validator_outputs(role):
+    return [f'{role}-{name}' for name in
+            ('prompt.txt', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'ARTIFACT.md')]
+
+
+def validation(directory, start):
+    """'skipped' or 'required' for one attempt's finder review; None before the validators existed.
+
+    Only a first review, one that inherits no earlier review and so freezes no WITNESS_RESULTS.md,
+    can skip, and only when the last nonblank line of its final answer is NO_CANDIDATES.
+    """
+    if 'validation_version' not in start:
+        return None
+    version = start['validation_version']
+    require(type(version) is int and version == VALIDATION_VERSION, 'validation-version',
+            'unsupported declared validation version')
+    lines = [line.strip() for line in (directory / 'ARTIFACT.md').read_text(
+        encoding='utf-8', errors='replace').splitlines() if line.strip()]
+    first = start['phase'] == 1 and 'WITNESS_RESULTS.md' not in start['inputs']
+    return 'skipped' if first and lines and lines[-1] == NO_CANDIDATES else 'required'
 
 
 def encode(value):
@@ -89,12 +119,12 @@ def shell_guard(name, *args):
 def recompute(repo, directory, start, checkout=None):
     """Only facts about execution, target and bytes. No prose is scored."""
     checks = []
-    def check(name, fn):
+    def check(name, fn, label=''):
         try:
             fn()
             checks.append({'guard': name, 'ok': True})
         except (Rejected, OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
-            checks.append({'guard': name, 'ok': False, 'reason': str(e).replace('\n', '; ')})
+            checks.append({'guard': name, 'ok': False, 'reason': label + str(e).replace('\n', '; ')})
     def inputs():
         mandatory = {'SEAL.txt', 'inventory.txt', 'DIFF.patch', 'CHANGED.txt', 'prompt.txt'}
         if scope_version(start) == 1:
@@ -104,6 +134,8 @@ def recompute(repo, directory, start, checkout=None):
                           'REMEDIATION_CHANGED.txt', 'REMEDIATION_HUNKS.md'}
             if prose_mode(start):
                 mandatory.add('PREVIOUS_REVIEW.md')
+            if 'validation_version' in start:
+                mandatory.add('PRIOR_VALIDATION.md')
             require(digest((directory / 'ROUND1_INVENTORY.md').read_bytes()) == start['inventory_sha256'],
                     'inventory-integrity', 'original review copy differs from trusted digest')
         require(mandatory <= start['inputs'].keys(), 'input-digests', 'required input digest missing')
@@ -122,13 +154,13 @@ def recompute(repo, directory, start, checkout=None):
                                           'executor-exit', 'executor failed; see executor.err'))
     for name in ('guard_turn_completed', 'guard_cmds_nonzero'):
         check(name, lambda name=name: shell_guard(name, directory / 'events.jsonl'))
-    def extracted():
+    def extracted(prefix=''):
         marker = '--final' if prose_mode(start) else (
             '# Round 1 review inventory' if start['phase'] == 1 else '# Round 2 closure review')
-        p = subprocess.run([sys.executable, str(HERE / 'extract.py'), str(directory / 'events.jsonl'), marker],
-                           capture_output=True, env=child_environment())
-        require(p.returncode == 0 and p.stdout == (directory / 'ARTIFACT.md').read_bytes(),
-                'last-message', 'no nonempty final message, or artifact differs from executor output')
+        p = subprocess.run([sys.executable, str(HERE / 'extract.py'), str(directory / f'{prefix}events.jsonl'),
+                            marker], capture_output=True, env=child_environment())
+        require(p.returncode == 0 and p.stdout == (directory / f'{prefix}ARTIFACT.md').read_bytes(),
+                prefix + 'last-message', 'no nonempty final message, or artifact differs from executor output')
     check('last-message', extracted)
     def target():
         p = subprocess.run([str(SCRIPTS / 'target-seal.sh'), 'verify', str(repo), str(directory), start['head_sha']],
@@ -137,6 +169,21 @@ def recompute(repo, directory, start, checkout=None):
     check('target', target)
     check('checkout', lambda: require((directory / 'checkout-head.txt').read_text().strip() == start['head_sha'],
                                       'checkout', 'checkout did not match the reviewed head'))
+    if all(c['ok'] for c in checks) and validation(directory, start) == 'required':
+        # A required validator is checked like the finder: it ran, finished, used tools and
+        # left a nonempty final answer. A validator that never started fails here too.
+        for role in VALIDATORS:
+            exit_file = directory / f'{role}-executor-exit.txt'
+            def exited(role=role, exit_file=exit_file):
+                require(exit_file.is_file(), f'{role}-executor-exit', f'the {role} did not run')
+                code = exit_file.read_text().strip()
+                require(code == '0', f'{role}-executor-exit', f'the {role} exited {code}; see {role}-executor.err')
+            check(f'{role}-executor-exit', exited)
+            if exit_file.is_file():
+                for name in ('guard_turn_completed', 'guard_cmds_nonzero'):
+                    check(f'{role}-{name}', lambda role=role, name=name:
+                          shell_guard(name, directory / f'{role}-events.jsonl'), f'{role}: ')
+                check(f'{role}-last-message', lambda role=role: extracted(role + '-'))
     return checks
 
 
@@ -163,11 +210,58 @@ def observations_state(start, end):
 
 
 def evidence_available(checks, end, start):
+    """Whether the finder's review is usable evidence. A validator that failed after it leaves the
+    attempt failed, never complete, but the finder's answer still feeds the next follow-up."""
     # A removed checkout cannot be inspected again. Preserve its recorded head failure.
     return (bool(end.get('executed')) and not (end.get('reason') and not end.get('guards'))
             and observations_state(start, end) in {'UNCHANGED', 'NOT_OBSERVED'}
-            and all(c['ok'] for c in checks) and all(
+            and all(c['ok'] for c in checks if not validator_guard(c['guard'])) and all(
                 c['ok'] for c in end.get('guards', []) if c['guard'] == 'checkout'))
+
+
+def finder_recorded(start, end):
+    """The same question from the receipt alone: every recorded review, and a fresh attempt whose
+    finder passed every check while a required validator failed."""
+    guards = end.get('guards') or []
+    return bool(end.get('executed')) and (bool(end.get('recorded', end.get('accepted'))) or (
+        any(validator_guard(c['guard']) for c in guards)
+        and all(c['ok'] for c in guards if not validator_guard(c['guard']))
+        and observations_state(start, end) in {'UNCHANGED', 'NOT_OBSERVED'}))
+
+
+def validator_answers(directory, end):
+    """Each validator's preserved, nonempty final answer in one finished attempt."""
+    answers = {}
+    for role in VALIDATORS:
+        name = f'{role}-ARTIFACT.md'
+        if name in end.get('outputs', {}) and (directory / name).stat().st_size:
+            answers[role] = directory / name
+    return answers
+
+
+def validators_state(directory, start, end, names=None):
+    """What each validator did in one attempt, from its receipt. A status here is never a verdict.
+
+    `names` maps a role to the file a reader should open instead of the preserved path.
+    """
+    if 'validation_version' not in start:
+        return 'not run (the attempt predates the validators)'
+    if not end:
+        return 'not run (the attempt did not finish)'
+    guards = end.get('guards') or []
+    if not any(validator_guard(c['guard']) for c in guards):
+        if guards and all(c['ok'] for c in guards):
+            return f'skipped (the first review ended with "{NO_CANDIDATES}")'
+        if end.get('reason') and not guards:
+            return f"not completed ({end['reason']})"
+        return "not run (the finder's review was not usable)"
+    answers, names = validator_answers(directory, end), names or {}
+    parts = []
+    for role in VALIDATORS:
+        failed = [c['reason'] for c in guards if c['guard'].startswith(role + '-') and not c['ok']]
+        answer = f', answer {names.get(role, answers[role])}' if role in answers else ', no answer'
+        parts.append(f'{role} ' + (f'FAILED: {failed[0]}' if failed else 'completed') + answer)
+    return '; '.join(parts)
 
 
 def budget(starts):
@@ -234,7 +328,7 @@ def status(root, repo, head, base=None, context=None):
     orphans = orphaned_rounds(root, starts)
     if orphans:
         print('ORPHANED_PREPARATION: ' + ', '.join(map(str, orphans)) +
-              '; preserve the evidence and use human review')
+              '; preserve the evidence: no review can be recorded for this PR ID, so the review ends as failed')
     if not starts:
         print(f'NOT_REVIEWED: requested head {head}; 0/{MAX_ROUNDS} attempts')
         return
@@ -252,12 +346,13 @@ def status(root, repo, head, base=None, context=None):
     print(f'Artifact: {root / f"round-{n:04}" / "ARTIFACT.md"}')
     if end:
         print('Checkout observations: ' + observations_state(start, end))
+        print('Validators: ' + validators_state(root / f'round-{n:04}', start, end))
     if end.get('freshness_reason') or end.get('reason'):
         print(end.get('freshness_reason') or end['reason'])
     import followup  # imports this module; loaded only when asked
     keys = followup.recurring(followup.recorded(root, starts, ends))
     if keys:
-        print('REDESIGN_REQUIRED before another review: ' + ', '.join(keys))
+        print(followup.recurrence_note(keys))
 
 
 def audit(root, repo, progress=False):
@@ -319,6 +414,9 @@ def audit(root, repo, progress=False):
         if not end['executed'] or (end.get('reason') and not end.get('guards')):
             continue
         mandatory = {'ARTIFACT.md', 'events.jsonl', 'executor.err', 'executor-exit.txt', 'checkout-head.txt'}
+        for role in VALIDATORS:
+            if any(c['guard'] == f'{role}-last-message' for c in end['guards']):
+                mandatory.update(validator_outputs(role))
         require(mandatory <= end['outputs'].keys(), 'ledger-integrity', 'required output digest missing')
         fresh = prose_mode(start)
         result_key = 'recorded' if fresh else 'accepted'
@@ -343,6 +441,15 @@ def audit(root, repo, progress=False):
                 require((d / 'PREVIOUS_REVIEW.md').read_bytes() ==
                         (root / f'round-{prior:04}' / 'ARTIFACT.md').read_bytes(),
                         'ledger-handoff', 'previous follow-up substituted')
+                for label, k in (('ROUND1', start.get('original_round')), ('PREVIOUS', prior)):
+                    if 'validation_version' not in start or k not in ends:
+                        continue
+                    answers = validator_answers(root / f'round-{k:04}', ends[k])
+                    for role in VALIDATORS:
+                        name = f'{label}_{role.upper()}.md'
+                        require((name in start['inputs']) == (role in answers) and (
+                            role not in answers or (d / name).read_bytes() == answers[role].read_bytes()),
+                            'ledger-handoff', f'{name} is not the answer preserved in attempt {k}')
         expected_sha = digest((d / 'ARTIFACT.md').read_bytes()) if start['phase'] == 1 else start.get('inventory_sha256')
         require(end['inventory_sha256'] == expected_sha, 'ledger-digest', 'review digest differs')
         if start['phase'] == 1 and usable:
@@ -376,7 +483,7 @@ def report(root, repo):
     orphans = orphaned_rounds(root, starts)
     if orphans:
         print('ORPHANED_PREPARATION: ' + ', '.join(map(str, orphans)) +
-              '; preserve the evidence and use human review')
+              '; preserve the evidence: no review can be recorded for this PR ID, so the review ends as failed')
     print('Review evidence only; no row or exit status authorizes a merge.')
     print('attempt phase head outcome artifact')
     for n, s in starts.items():
@@ -387,6 +494,7 @@ def report(root, repo):
             outcome = 'LEGACY_ACCEPTED' if e.get('accepted') else 'LEGACY_REJECTED' if e else 'INTERRUPTED'
         print(n, s['phase'], s['head_sha'], outcome, root / f'round-{n:04}' / 'ARTIFACT.md')
         print('  checkout observations: ' + observations_state(s, e))
+        print('  validators: ' + validators_state(root / f'round-{n:04}', s, e))
         for name, item in e.get('checkout_observations', {}).items():
             if item.get('status') != 'unchanged':
                 print(f"  {name}: {item['status']} ({item.get('reason', 'unknown reason')})")
@@ -426,9 +534,12 @@ def handoff(root, repo, head, reason='automatic review has stopped'):
     matching = [n for n, s in starts.items() if s['head_sha'] == head]
     if not matching:
         print('This head has not been reviewed. Earlier evidence is not a review of this head.')
-    print('Read the artifacts above with their execution failures and scope limitations. '
-          'Keep unresolved findings, repair regressions and newly discovered original blockers. '
-          'Assess closure and required product checks, then decide to merge, repair or split the change. '
-          'A new head, phase-1 restart or changed response does not replenish this PR budget.')
+    print('The calling agent reads the artifacts above with their execution failures, validator answers '
+          'and scope limitations, keeping unresolved findings, repair regressions and newly discovered '
+          'original blockers. When the latest review covers this head, its validators completed or were '
+          'skipped, nothing blocking remains and the required product checks pass, it continues its '
+          'existing completion path; otherwise it ends the task as failed, naming what remains. Nobody '
+          'is asked to answer. A new head, phase-1 restart or changed response does not replenish this '
+          'PR budget.')
     import followup  # imports this module; loaded only when asked
     print(f'Handoff document: {followup.write_handoff(root, head, starts, ends, originals, reason)}')

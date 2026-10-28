@@ -51,7 +51,8 @@ with tempfile.TemporaryDirectory(prefix='review-observe-test-') as temporary:
     executable.write_text('#!' + sys.executable + '\n' + '''
 import os, shutil, subprocess, sys
 from pathlib import Path
-mode = os.environ['TEST_MODE']
+# Only the finder's checkout is observed; the validators' disposable checkouts are not.
+mode = '' if Path('CANDIDATE_REVIEW.md').is_file() else os.environ['TEST_MODE']
 source = Path('source.txt')
 if mode == 'tracked':
     source.write_text('changed in checkout\\n')

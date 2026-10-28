@@ -8,7 +8,7 @@ substitutes the placeholders.
 
   render-prompt.py SKILL.md 1 KEY=VALUE ...
   render-prompt.py SKILL.md 1 --values-stdin
-  render-prompt.py SKILL.md redesign --values-stdin
+  render-prompt.py SKILL.md refuter --values-stdin
 """
 import json
 import re
@@ -28,7 +28,7 @@ def unique_object(pairs):
 
 
 if len(sys.argv) < 3:
-    fail('expected SKILL.md, round and values')
+    fail('expected SKILL.md, round or validator role, and values')
 skill, rnd = sys.argv[1:3]
 args = sys.argv[3:]
 if args == ['--values-stdin']:
@@ -48,8 +48,8 @@ try:
 except (OSError, UnicodeError):
     fail('cannot read prompt source')
 
-# The redesign request is host text the implementer fills in, kept beside the prompts it feeds.
-heading = 'Redesign template' if rnd == 'redesign' else 'Round %s prompt' % rnd
+# The two validators check the finder's candidates; their prompts sit beside the round prompts.
+heading = {'refuter': 'Refuter prompt', 'reproducer': 'Reproducer prompt'}.get(rnd, 'Round %s prompt' % rnd)
 m = re.search(r"^## %s\s*$" % re.escape(heading), text, re.M)
 if not m:
     sys.exit("render-prompt: SKILL.md has no '## %s' heading" % heading)

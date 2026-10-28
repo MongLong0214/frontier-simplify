@@ -25,8 +25,9 @@ for consumer in json.loads(config.read_text())['consumers']:
             if consumer.get('lessons'):
                 env['REVIEW_LESSONS'] = consumer['lessons']
             p = subprocess.run([str(runner), repo, str(pr['number']), 'status' if a.status else 'auto'], env=env)
-            # A budget handoff is terminal, not an infrastructure error or approval.
-            failed |= p.returncode not in ({0} if a.status else {10, 11})
+            # A budget handoff or a failing witness is a result for the calling agent, not an
+            # infrastructure error or an approval.
+            failed |= p.returncode not in ({0} if a.status else {10, 11, 13})
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         print(f'dogfood: {repo}: {e}', file=sys.stderr)
         failed = True
